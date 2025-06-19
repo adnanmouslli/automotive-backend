@@ -1,0 +1,219 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  DRIVER
+}
+
+enum ServiceType {
+  VEHICLE_WASH      // غسيل السيارة
+  REGISTRATION      // تسجيل
+  TRANSPORT         // نقل
+  INSPECTION        // فحص
+  MAINTENANCE       // صيانة
+}
+
+enum ImageCategory {
+  PICKUP        // صور قبل التسليم
+  DELIVERY      // صور بعد التسليم
+  ADDITIONAL    // صور إضافية
+  DAMAGE        // صور الأضرار
+  INTERIOR      // صور داخلية
+  EXTERIOR      // صور خارجية
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  password  String
+  role      UserRole @default(DRIVER)
+  isActive  Boolean  @default(true)
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  orders Order[]
+
+  @@map("users")
+}
+
+model Order {
+  id                    String      @id @default(cuid())
+  orderNumber           Int         @unique @default(autoincrement())
+  
+  // Client Information
+  client                String
+  clientPhone           String?
+  clientEmail           String?
+  
+  // Order Details
+  description           String?
+  comments              String?
+  items                 String[]    @default([]) // قائمة العناصر
+  
+  // Timestamps
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  // Foreign Keys
+  driverId              String
+
+  // Relations
+  driver                User                @relation(fields: [driverId], references: [id])
+  
+  // Addresses
+  pickupAddress         Address?            @relation("PickupAddress")
+  deliveryAddress       Address?            @relation("DeliveryAddress")
+  
+  // Order Components
+  vehicleData           VehicleData?
+  service               Service?
+  expenses              Expenses?
+  
+  // Signatures
+  driverSignatureId     String?     @unique
+  customerSignatureId   String?     @unique
+  
+  driverSignature       Signature?  @relation("DriverSignature", fields: [driverSignatureId], references: [id], onDelete: SetNull)
+  customerSignature     Signature?  @relation("CustomerSignature", fields: [customerSignatureId], references: [id], onDelete: SetNull)
+  
+  signatures            Signature[] @relation("OrderSignatures")
+
+  // Images
+  images                Image[]
+
+  @@map("orders")
+}
+
+model Address {
+  id          String @id @default(cuid())
+  street      String
+  houseNumber String
+  zipCode     String
+  city        String
+  country     String @default("Deutschland")
+  coordinates String? // إحداثيات GPS اختيارية
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Foreign Keys
+  pickupOrderId    String? @unique
+  deliveryOrderId  String? @unique
+
+  // Relations
+  pickupOrder    Order? @relation("PickupAddress", fields: [pickupOrderId], references: [id], onDelete: Cascade)
+  deliveryOrder  Order? @relation("DeliveryAddress", fields: [deliveryOrderId], references: [id], onDelete: Cascade)
+
+  @@map("addresses")
+}
+
+model VehicleData {
+  id                    String @id @default(cuid())
+  vehicleOwner          String
+  licensePlateNumber    String
+  vin                   String?  // Vehicle Identification Number
+  brand                 String?
+  model                 String?
+  year                  Int?
+  color                 String?
+  
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  // Foreign Keys
+  orderId String @unique
+
+  // Relations
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("vehicle_data")
+}
+
+model Service {
+  id          String      @id @default(cuid())
+  vehicleType String
+  serviceType ServiceType
+  description String?
+  
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Foreign Keys
+  orderId String @unique
+
+  // Relations
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("services")
+}
+
+model Expenses {
+  id        String @id @default(cuid())
+  fuel      Int    @default(0)  // وقود
+  wash      Int    @default(0)  // غسيل
+  adBlue    Int    @default(0)  // AdBlue
+  other     Int    @default(0)  // أخرى
+  tollFees  Int    @default(0)  // رسوم الطرق
+  parking   Int    @default(0)  // مواقف
+  notes     String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Foreign Keys
+  orderId String @unique
+
+  // Relations
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("expenses")
+}
+
+model Signature {
+  id          String    @id @default(cuid())
+  name        String    // اسم الموقع
+  signUrl     String    // مسار ملف التوقيع
+  isDriver    Boolean   @default(false) // تحديد نوع التوقيع
+  signedAt    DateTime  @default(now())
+  
+  // ربط بالطلبية
+  orderId     String
+  order       Order     @relation("OrderSignatures", fields: [orderId], references: [id], onDelete: Cascade)
+  
+  // العلاقات الخاصة للتوقيعات
+  driverOrder    Order? @relation("DriverSignature")
+  customerOrder  Order? @relation("CustomerSignature")
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  @@map("signatures")
+}
+
+model Image {
+  id          String        @id @default(cuid())
+  name        String
+  imageUrl    String
+  category    ImageCategory
+  description String?
+  
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Foreign Keys
+  orderId String
+
+  // Relations
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("images")
+}

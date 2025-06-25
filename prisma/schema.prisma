@@ -46,10 +46,21 @@ model User {
   @@map("users")
 }
 
+
+  enum OrderStatus {
+  PENDING     // قيد الانتظار
+  IN_PROGRESS // قيد التنفيذ  
+  COMPLETED   // مكتمل
+  CANCELLED   // ملغي
+}
+
 model Order {
   id                    String      @id @default(cuid())
   orderNumber           Int         @unique @default(autoincrement())
   
+    status                OrderStatus @default(PENDING)
+
+
   // Client Information
   client                String
   clientPhone           String?

@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Res, UseGuards, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Param, Res, UseGuards, ParseIntPipe, Post, Body } from '@nestjs/common';
 import { Response } from 'express';
 import { PdfService } from './pdf.service';
 import { JwtAuthGuard } from 'src/common';
@@ -64,4 +64,22 @@ export class PdfController {
       });
     }
   }
+
+  @Post('order/:orderId/send-email')
+  async sendOrderPdfByEmail(
+    @Param('orderId') orderId: string,
+    @Body('email') email: string,
+  ) {
+    try {
+      await this.pdfService.sendOrderPdfByEmail(orderId, email);
+      return { message: '✅ تم إرسال التقرير إلى البريد الإلكتروني بنجاح' };
+    } catch (error) {
+      console.error('❌ فشل إرسال التقرير بالبريد الإلكتروني:', error);
+      return {
+        message: '❌ فشل إرسال التقرير بالبريد الإلكتروني',
+        error: error.message,
+      };
+    }
+  }
+
 }

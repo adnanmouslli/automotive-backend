@@ -265,7 +265,7 @@ async function main() {
       service: {
         create: {
           vehicleType: 'سيدان',
-          serviceType: ServiceType.VEHICLE_WASH,
+          serviceType: ServiceType.WASH,
           description: 'غسيل شامل خارجي وداخلي مع تلميع الجسم',
         },
       },

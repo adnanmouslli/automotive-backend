@@ -2,10 +2,13 @@
 CREATE TYPE "UserRole" AS ENUM ('ADMIN', 'DRIVER');
 
 -- CreateEnum
-CREATE TYPE "ServiceType" AS ENUM ('VEHICLE_WASH', 'REGISTRATION', 'TRANSPORT', 'INSPECTION', 'MAINTENANCE');
+CREATE TYPE "ServiceType" AS ENUM ('WASH', 'REGISTRATION', 'TRANSPORT', 'INSPECTION', 'MAINTENANCE');
 
 -- CreateEnum
 CREATE TYPE "ImageCategory" AS ENUM ('PICKUP', 'DELIVERY', 'ADDITIONAL', 'DAMAGE', 'INTERIOR', 'EXTERIOR');
+
+-- CreateEnum
+CREATE TYPE "OrderStatus" AS ENUM ('PENDING', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED');
 
 -- CreateTable
 CREATE TABLE "users" (
@@ -26,6 +29,7 @@ CREATE TABLE "users" (
 CREATE TABLE "orders" (
     "id" TEXT NOT NULL,
     "orderNumber" SERIAL NOT NULL,
+    "status" "OrderStatus" NOT NULL DEFAULT 'PENDING',
     "client" TEXT NOT NULL,
     "clientPhone" TEXT,
     "clientEmail" TEXT,

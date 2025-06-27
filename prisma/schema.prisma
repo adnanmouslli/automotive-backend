@@ -13,7 +13,7 @@ enum UserRole {
 }
 
 enum ServiceType {
-  VEHICLE_WASH      // غسيل السيارة
+  WASH      // غسيل السيارة
   REGISTRATION      // تسجيل
   TRANSPORT         // نقل
   INSPECTION        // فحص

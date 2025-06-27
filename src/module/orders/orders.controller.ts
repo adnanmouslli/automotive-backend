@@ -14,10 +14,13 @@ import {
   Put,
   HttpException,
   Query,
+  NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { JwtAuthGuard } from 'src/common';
+import { UserRole } from '@prisma/client';
 
 interface AuthenticatedRequest extends Request {
   user: {
@@ -54,6 +57,89 @@ export class OrdersController {
 
     return this.ordersService.create(createOrderDto, req.user.id);
   }
+
+  // 1. تحديث المصاريف
+@Put(':id/expenses')
+async updateExpenses(
+  @Param('id') orderId: string,
+  @Body() expensesData: any,
+  @Request() req: AuthenticatedRequest
+) {
+  console.log('🔄 تحديث مصاريف الطلبية:', orderId);
+  console.log('📊 البيانات المستلمة:', expensesData);
+
+  try {
+    // التحقق من وجود orderId في البيانات
+    if (!expensesData.orderId) {
+      expensesData.orderId = orderId;
+    }
+
+    const result = await this.ordersService.updateOrderExpenses(
+      orderId,
+      expensesData,
+      req.user.id,
+      req.user.role as any
+    );
+
+    return {
+      success: true,
+      message: 'تم تحديث المصاريف بنجاح',
+      data: result,
+    };
+  } catch (error) {
+    throw new HttpException(
+      {
+        success: false,
+        message: error.message || 'فشل في تحديث المصاريف',
+        error: error.name,
+      },
+      error.status || HttpStatus.BAD_REQUEST,
+    );
+  }
+}
+
+
+// 2. إضافة المصاريف (endpoint منفصل للوضوح)
+@Post(':id/expenses')
+async addExpenses(
+  @Param('id') orderId: string,
+  @Body() expensesData: any,
+  @Request() req: AuthenticatedRequest
+) {
+  console.log('📤 إضافة مصاريف للطلبية:', orderId);
+  console.log('📊 البيانات المستلمة:', expensesData);
+
+  try {
+    // التحقق من وجود orderId في البيانات
+    if (!expensesData.orderId) {
+      expensesData.orderId = orderId;
+    }
+
+    const result = await this.ordersService.addOrderExpenses(
+      orderId,
+      expensesData,
+      req.user.id,
+      req.user.role as any
+    );
+
+    return {
+      success: true,
+      message: 'تم إضافة المصاريف بنجاح',
+      data: result,
+    };
+  } catch (error) {
+    throw new HttpException(
+      {
+        success: false,
+        message: error.message || 'فشل في إضافة المصاريف',
+        error: error.name,
+      },
+      error.status || HttpStatus.BAD_REQUEST,
+    );
+  }
+}
+
+
 
   @Get()
   async findAll(@Request() req, @Query('status') status?: string) {

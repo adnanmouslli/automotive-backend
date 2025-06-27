@@ -1009,4 +1009,127 @@ async deleteSignature(orderId: string, signatureId: string, userId: string, user
   }
 }
 
+
+// 1. تحديث مصاريف الطلبية
+async updateOrderExpenses(
+  orderId: string,
+  expensesData: any,
+  userId: string,
+  userRole: UserRole
+) {
+  console.log('🔄 تحديث مصاريف الطلبية:', orderId);
+  console.log('📊 البيانات المستلمة:', expensesData);
+
+  try {
+    // التحقق من وجود الطلبية والصلاحية
+    const order = await this.findOne(orderId, userId, userRole);
+    
+    if (!order) {
+      throw new NotFoundException('الطلبية غير موجودة');
+    }
+
+    // البحث عن المصاريف الحالية
+    const existingExpenses = await this.prisma.expenses.findFirst({
+      where: { orderId },
+    });
+
+    let expenses;
+
+    if (existingExpenses) {
+      // تحديث المصاريف الموجودة
+      expenses = await this.prisma.expenses.update({
+        where: { id: existingExpenses.id },
+        data: {
+          fuel: expensesData.fuel || 0,
+          wash: expensesData.wash || 0,
+          adBlue: expensesData.adBlue || 0,
+          other: expensesData.other || 0,
+          tollFees: expensesData.total || 0,
+          notes: expensesData.notes || null,
+          updatedAt: new Date(),
+        },
+      });
+    } else {
+      // إنشاء مصاريف جديدة
+      expenses = await this.prisma.expenses.create({
+        data: {
+          orderId: orderId,
+          fuel: expensesData.fuel || 0,
+          wash: expensesData.wash || 0,
+          adBlue: expensesData.adBlue || 0,
+          other: expensesData.other || 0,
+          tollFees: expensesData.total || 0,
+          notes: expensesData.notes || null,
+        },
+      });
+    }
+
+    console.log('✅ تم تحديث المصاريف بنجاح');
+    return expenses;
+
+  } catch (error) {
+    if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      throw error;
+    }
+    console.error('❌ خطأ في تحديث المصاريف:', error);
+    throw new BadRequestException(`فشل في تحديث المصاريف: ${error.message}`);
+  }
+}
+
+
+
+
+
+// 2. إضافة مصاريف جديدة
+async addOrderExpenses(
+  orderId: string,
+  expensesData: any,
+  userId: string,
+  userRole: UserRole
+) {
+  console.log('📤 إضافة مصاريف للطلبية:', orderId);
+  console.log('📊 البيانات المستلمة:', expensesData);
+
+  try {
+    // التحقق من وجود الطلبية والصلاحية
+    const order = await this.findOne(orderId, userId, userRole);
+    
+    if (!order) {
+      throw new NotFoundException('الطلبية غير موجودة');
+    }
+
+    // التحقق من عدم وجود مصاريف مسبقة
+    const existingExpenses = await this.prisma.expenses.findFirst({
+      where: { orderId },
+    });
+
+    if (existingExpenses) {
+      throw new BadRequestException('توجد مصاريف مسجلة بالفعل لهذه الطلبية. استخدم تحديث المصاريف بدلاً من ذلك.');
+    }
+
+    // إنشاء مصاريف جديدة
+    const expenses = await this.prisma.expenses.create({
+      data: {
+        orderId: orderId,
+        fuel: expensesData.fuel || 0,
+        wash: expensesData.wash || 0,
+        adBlue: expensesData.adBlue || 0,
+        other: expensesData.other || 0,
+        tollFees: expensesData.total || 0,
+        notes: expensesData.notes || null,
+      },
+    });
+
+    console.log('✅ تم إضافة المصاريف بنجاح');
+    return expenses;
+
+  } catch (error) {
+    if (error instanceof NotFoundException || error instanceof ForbiddenException || error instanceof BadRequestException) {
+      throw error;
+    }
+    console.error('❌ خطأ في إضافة المصاريف:', error);
+    throw new BadRequestException(`فشل في إضافة المصاريف: ${error.message}`);
+  }
+}
+
 }

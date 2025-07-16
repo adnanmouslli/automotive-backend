@@ -1,7 +1,7 @@
 // src/orders/orders.service.ts
 import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
-import { CreateAddressDto, CreateOrderDto } from './dto/create-order.dto';
-import { OrderStatus, UserRole } from '@prisma/client';
+import { CreateAddressDto, CreateOrderDto, CreateVehicleDamageDto } from './dto/create-order.dto';
+import { DamageType, OrderStatus, UserRole, VehicleSide } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
@@ -10,117 +10,193 @@ import { join } from 'path';
 export class OrdersService {
   constructor(private prisma: PrismaService) {}
 
-  async create(createOrderDto: CreateOrderDto, userId: string) {
-    console.log('📋 إنشاء طلبية جديدة...');
-    console.log('User ID:', userId);
-    console.log('Order Data:', createOrderDto);
-    
-    // التحقق من وجود المستخدم
-    if (!userId) {
-      throw new BadRequestException('معرف المستخدم مطلوب');
-    }
+async create(createOrderDto: CreateOrderDto, userId: string) {
+  console.log('📋 إنشاء طلبية جديدة...');
+  console.log('User ID:', userId);
+  console.log('Order Data:', createOrderDto);
+  
+  // التحقق من وجود المستخدم
+  if (!userId) {
+    throw new BadRequestException('معرف المستخدم مطلوب');
+  }
 
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
+  const user = await this.prisma.user.findUnique({
+    where: { id: userId },
+  });
+
+  if (!user) {
+    throw new NotFoundException('المستخدم غير موجود');
+  }
+
+  console.log('✅ تم التحقق من المستخدم:', user.name);
+
+  const { pickupAddress, deliveryAddress, clientAddress, billingAddress, damages, ...orderData } = createOrderDto;
+
+  try {
+    const order = await this.prisma.order.create({
+      data: {
+        // بيانات الطلبية الأساسية
+        client: orderData.client,
+        clientPhone: orderData.clientPhone,
+        clientEmail: orderData.clientEmail,
+        
+        // بيانات صاحب الفاتورة
+        isSameBilling: orderData.isSameBilling ?? true,
+        billingName: orderData.billingName,
+        billingPhone: orderData.billingPhone,
+        billingEmail: orderData.billingEmail,
+        
+        description: orderData.description,
+        comments: orderData.comments,
+        items: orderData.items || [],
+        
+        // ربط بالسائق
+        driver: {
+          connect: {
+            id: userId
+          }
+        },
+        
+        // إنشاء عنوان العميل
+        clientAddress: clientAddress ? {
+          create: {
+            street: clientAddress.street,
+            houseNumber: clientAddress.houseNumber,
+            zipCode: clientAddress.zipCode,
+            city: clientAddress.city,
+            country: clientAddress.country || 'Deutschland',
+          }
+        } : undefined,
+        
+        // إنشاء عنوان صاحب الفاتورة
+        billingAddress: billingAddress ? {
+          create: {
+            street: billingAddress.street,
+            houseNumber: billingAddress.houseNumber,
+            zipCode: billingAddress.zipCode,
+            city: billingAddress.city,
+            country: billingAddress.country || 'Deutschland',
+          }
+        } : undefined,
+        
+        // إنشاء عنوان الاستلام
+        pickupAddress: pickupAddress ? {
+          create: {
+            street: pickupAddress.street,
+            houseNumber: pickupAddress.houseNumber,
+            zipCode: pickupAddress.zipCode,
+            city: pickupAddress.city,
+            country: pickupAddress.country || 'Deutschland',
+
+            date: pickupAddress.date ? new Date(pickupAddress.date) : null,
+            companyName: pickupAddress.companyName,
+            contactPersonName: pickupAddress.contactPersonName,
+            contactPersonPhone: pickupAddress.contactPersonPhone,
+            contactPersonEmail: pickupAddress.contactPersonEmail,
+            fuelLevel: pickupAddress.fuelLevel,
+            fuelMeter: pickupAddress.fuelMeter,
+
+          }
+        } : undefined,
+        
+        // إنشاء عنوان التسليم
+        deliveryAddress: deliveryAddress ? {
+          create: {
+            street: deliveryAddress.street,
+            houseNumber: deliveryAddress.houseNumber,
+            zipCode: deliveryAddress.zipCode,
+            city: deliveryAddress.city,
+            country: deliveryAddress.country || 'Deutschland',
+
+            date: deliveryAddress.date ? new Date(deliveryAddress.date) : null,
+            companyName: deliveryAddress.companyName,
+            contactPersonName: deliveryAddress.contactPersonName,
+            contactPersonPhone: deliveryAddress.contactPersonPhone,
+            contactPersonEmail: deliveryAddress.contactPersonEmail,
+            fuelLevel: deliveryAddress.fuelLevel,
+            fuelMeter: deliveryAddress.fuelMeter,
+          }
+        } : undefined,
+        
+        // إنشاء بيانات السيارة مع الحقول الجديدة
+        vehicleData: {
+          create: {
+            vehicleOwner: orderData.vehicleOwner,
+            licensePlateNumber: orderData.licensePlateNumber,
+            vin: orderData.vin,
+            brand: orderData.brand,
+            model: orderData.model,
+            year: orderData.year,
+            color: orderData.color,
+            
+            // إضافة الحقول الجديدة
+            ukz: orderData.ukz,
+            fin: orderData.fin,
+            bestellnummer: orderData.bestellnummer,
+            leasingvertragsnummer: orderData.leasingvertragsnummer,
+            kostenstelle: orderData.kostenstelle,
+            bemerkung: orderData.bemerkung,
+            typ: orderData.typ,
+          }
+        },
+        
+        // إنشاء بيانات الخدمة
+        service: {
+          create: {
+            vehicleType: orderData.vehicleType,
+            serviceType: orderData.serviceType,
+            description: orderData.serviceDescription,
+          }
+        },
+
+         // إضافة الأضرار
+        damages: damages && damages.length > 0 ? {
+          create: damages.map(damage => ({
+            side: damage.side,
+            type: damage.type,
+            description: damage.description?.trim() || null,
+          }))
+        } : undefined,
+
+        
+      },
+      include: {
+        clientAddress: true,
+        billingAddress: true,
+        pickupAddress: true,
+        deliveryAddress: true,
+        vehicleData: true,
+        service: true,
+        driver: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          }
+        },
+        images: true,
+        driverSignature: true,
+        customerSignature: true,
+        expenses: true,
+        // إضافة الأضرار إلى include
+        damages: {
+          orderBy: {
+            createdAt: 'asc'
+          }
+        },
+      },
     });
 
-    if (!user) {
-      throw new NotFoundException('المستخدم غير موجود');
-    }
+    console.log('✅ تم إنشاء الطلبية بنجاح، رقم:', order.orderNumber);
+    return order;
 
-    console.log('✅ تم التحقق من المستخدم:', user.name);
-
-    const { pickupAddress, deliveryAddress, ...orderData } = createOrderDto;
-
-    try {
-      const order = await this.prisma.order.create({
-        data: {
-          // بيانات الطلبية الأساسية
-          client: orderData.client,
-          clientPhone: orderData.clientPhone,
-          clientEmail: orderData.clientEmail,
-          description: orderData.description,
-          comments: orderData.comments,
-          items: orderData.items || [],
-          
-          // ربط بالسائق
-          driver: {
-            connect: {
-              id: userId
-            }
-          },
-          
-          // إنشاء عنوان الاستلام
-          pickupAddress: pickupAddress ? {
-            create: {
-              street: pickupAddress.street,
-              houseNumber: pickupAddress.houseNumber,
-              zipCode: pickupAddress.zipCode,
-              city: pickupAddress.city,
-              country: pickupAddress.country || 'Deutschland',
-            }
-          } : undefined,
-          
-          // إنشاء عنوان التسليم
-          deliveryAddress: deliveryAddress ? {
-            create: {
-              street: deliveryAddress.street,
-              houseNumber: deliveryAddress.houseNumber,
-              zipCode: deliveryAddress.zipCode,
-              city: deliveryAddress.city,
-              country: deliveryAddress.country || 'Deutschland',
-            }
-          } : undefined,
-          
-          // إنشاء بيانات السيارة
-          vehicleData: {
-            create: {
-              vehicleOwner: orderData.vehicleOwner,
-              licensePlateNumber: orderData.licensePlateNumber,
-              vin: orderData.vin,
-              brand: orderData.brand,
-              model: orderData.model,
-              year: orderData.year,
-              color: orderData.color,
-            }
-          },
-          
-          // إنشاء بيانات الخدمة
-          service: {
-            create: {
-              vehicleType: orderData.vehicleType,
-              serviceType: orderData.serviceType,
-              description: orderData.serviceDescription,
-            }
-          },
-        },
-        include: {
-          pickupAddress: true,
-          deliveryAddress: true,
-          vehicleData: true,
-          service: true,
-          driver: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-            }
-          },
-          images: true,
-          driverSignature: true,
-          customerSignature: true,
-          expenses: true,
-        },
-      });
-
-      console.log('✅ تم إنشاء الطلبية بنجاح، رقم:', order.orderNumber);
-      return order;
-
-    } catch (error) {
-      console.error('❌ خطأ في إنشاء الطلبية:', error);
-      throw new BadRequestException(`فشل في إنشاء الطلبية: ${error.message}`);
-    }
+  } catch (error) {
+    console.error('❌ خطأ في إنشاء الطلبية:', error);
+    throw new BadRequestException(`فشل في إنشاء الطلبية: ${error.message}`);
   }
+}
+
+
 
   async findAll(userId: string, userRole: UserRole) {
   console.log('📋 عرض الطلبيات للمستخدم:', userId, 'الدور:', userRole);
@@ -130,6 +206,8 @@ export class OrdersService {
   const orders = await this.prisma.order.findMany({
     where,
     include: {
+      clientAddress: true, // إضافة جديدة
+      billingAddress: true, // إضافة جديدة
       pickupAddress: true,
       deliveryAddress: true,
       vehicleData: true,
@@ -145,6 +223,12 @@ export class OrdersService {
       driverSignature: true,
       customerSignature: true,
       expenses: true,
+      damages: {
+        orderBy: {
+          createdAt: 'asc'
+        }
+      },
+
     },
     orderBy: {
       createdAt: 'desc',
@@ -173,6 +257,8 @@ export class OrdersService {
   const order = await this.prisma.order.findUnique({
     where: { id },
     include: {
+      clientAddress: true, // إضافة جديدة
+      billingAddress: true, // إضافة جديدة
       pickupAddress: true,
       deliveryAddress: true,
       vehicleData: true,
@@ -188,6 +274,11 @@ export class OrdersService {
       driverSignature: true,
       customerSignature: true,
       expenses: true,
+      damages: {
+        orderBy: {
+          createdAt: 'asc'
+        }
+      },
     },
   });
 
@@ -208,136 +299,272 @@ export class OrdersService {
 
 
   async update(id: string, updateData: Partial<CreateOrderDto>, userId: string, userRole: UserRole) {
-    console.log('📝 تحديث الطلبية:', id);
-    console.log('📊 البيانات المستلمة:', updateData);
+  
 
-    // التحقق من وجود الطلبية والصلاحيات
-    const existingOrder = await this.findOne(id, userId, userRole);
-    if (!existingOrder) {
-      throw new NotFoundException('الطلبية غير موجودة');
-    }
-
-    const { pickupAddress, deliveryAddress, ...orderData } = updateData;
-
-    try {
-      // إعداد البيانات للتحديث مع التحقق من القيم
-      const updatePayload: any = {
-        updatedAt: new Date(),
-      };
-
-      // تحديث البيانات الأساسية
-      if (orderData.client?.trim()) updatePayload.client = orderData.client.trim();
-      if (orderData.clientPhone?.trim()) updatePayload.clientPhone = orderData.clientPhone.trim();
-      if (orderData.clientEmail?.trim()) updatePayload.clientEmail = orderData.clientEmail.trim();
-      if (orderData.description !== undefined) updatePayload.description = orderData.description?.trim() || null;
-      if (orderData.comments !== undefined) updatePayload.comments = orderData.comments?.trim() || null;
-      if (orderData.items) updatePayload.items = orderData.items;
-
-      // تحديث عنوان الاستلام
-      if (pickupAddress && this.validateAddress(pickupAddress)) {
-        updatePayload.pickupAddress = {
-          update: {
-            street: pickupAddress.street.trim(),
-            houseNumber: pickupAddress.houseNumber.trim(),
-            zipCode: pickupAddress.zipCode.trim(),
-            city: pickupAddress.city.trim(),
-            country: pickupAddress.country?.trim() || 'Deutschland',
-            updatedAt: new Date(),
-          }
-        };
-      }
-
-      // تحديث عنوان التسليم
-      if (deliveryAddress && this.validateAddress(deliveryAddress)) {
-        updatePayload.deliveryAddress = {
-          update: {
-            street: deliveryAddress.street.trim(),
-            houseNumber: deliveryAddress.houseNumber.trim(),
-            zipCode: deliveryAddress.zipCode.trim(),
-            city: deliveryAddress.city.trim(),
-            country: deliveryAddress.country?.trim() || 'Deutschland',
-            updatedAt: new Date(),
-          }
-        };
-      }
-
-      // تحديث بيانات السيارة
-      const vehicleUpdateData: any = {};
-      if (orderData.vehicleOwner?.trim()) vehicleUpdateData.vehicleOwner = orderData.vehicleOwner.trim();
-      if (orderData.licensePlateNumber?.trim()) vehicleUpdateData.licensePlateNumber = orderData.licensePlateNumber.trim();
-      if (orderData.vin?.trim()) vehicleUpdateData.vin = orderData.vin.trim();
-      if (orderData.brand?.trim()) vehicleUpdateData.brand = orderData.brand.trim();
-      if (orderData.model?.trim()) vehicleUpdateData.model = orderData.model.trim();
-      if (orderData.year) vehicleUpdateData.year = orderData.year;
-      if (orderData.color?.trim()) vehicleUpdateData.color = orderData.color.trim();
-
-      if (Object.keys(vehicleUpdateData).length > 0) {
-        vehicleUpdateData.updatedAt = new Date();
-        updatePayload.vehicleData = {
-          update: vehicleUpdateData
-        };
-      }
-
-      // تحديث بيانات الخدمة
-      const serviceUpdateData: any = {};
-      if (orderData.vehicleType?.trim()) serviceUpdateData.vehicleType = orderData.vehicleType.trim();
-      if (orderData.serviceType) serviceUpdateData.serviceType = orderData.serviceType;
-      if (orderData.serviceDescription !== undefined) {
-        serviceUpdateData.description = orderData.serviceDescription?.trim() || null;
-      }
-
-      if (Object.keys(serviceUpdateData).length > 0) {
-        serviceUpdateData.updatedAt = new Date();
-        updatePayload.service = {
-          update: serviceUpdateData
-        };
-      }
-
-      console.log('📦 البيانات المحضرة للتحديث:', JSON.stringify(updatePayload, null, 2));
-
-      const updatedOrder = await this.prisma.order.update({
-        where: { id },
-        data: updatePayload,
-        include: {
-          pickupAddress: true,
-          deliveryAddress: true,
-          vehicleData: true,
-          service: true,
-          driver: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-            }
-          },
-          images: {
-            orderBy: { createdAt: 'desc' }
-          },
-          driverSignature: true,
-          customerSignature: true,
-          expenses: true,
-        },
-      });
-
-      console.log('✅ تم تحديث الطلبية بنجاح');
-      
-      // إرجاع البيانات بتنسيق متوافق مع الفرونت إند
-      return this.formatOrderResponse(updatedOrder);
-
-    } catch (error) {
-      console.error('❌ خطأ في تحديث الطلبية:', error);
-      
-      if (error.code === 'P2002') {
-        throw new BadRequestException('قيمة مكررة في أحد الحقول الفريدة');
-      }
-      
-      if (error.code === 'P2025') {
-        throw new NotFoundException('الطلبية أو أحد العناصر المرتبطة غير موجود');
-      }
-      
-      throw new BadRequestException(`فشل في تحديث الطلبية: ${error.message}`);
-    }
+  // التحقق من وجود الطلبية والصلاحيات
+  const existingOrder = await this.findOne(id, userId, userRole);
+  if (!existingOrder) {
+    throw new NotFoundException('الطلبية غير موجودة');
   }
+  
+  const { pickupAddress, deliveryAddress, clientAddress, billingAddress, damages, ...orderData } = updateData;
+  
+    console.log("===============");
+
+    console.log(updateData);
+      console.log("===============");
+
+  try {
+    // إعداد البيانات للتحديث مع التحقق من القيم
+    const updatePayload: any = {
+      updatedAt: new Date(),
+    };
+
+    // تحديث البيانات الأساسية
+    if (orderData.client?.trim()) updatePayload.client = orderData.client.trim();
+    if (orderData.clientPhone?.trim()) updatePayload.clientPhone = orderData.clientPhone.trim();
+    if (orderData.clientEmail?.trim()) updatePayload.clientEmail = orderData.clientEmail.trim();
+    
+    // تحديث بيانات صاحب الفاتورة
+    if (orderData.isSameBilling !== undefined) updatePayload.isSameBilling = orderData.isSameBilling;
+    if (orderData.billingName?.trim()) updatePayload.billingName = orderData.billingName.trim();
+    if (orderData.billingPhone?.trim()) updatePayload.billingPhone = orderData.billingPhone.trim();
+    if (orderData.billingEmail?.trim()) updatePayload.billingEmail = orderData.billingEmail.trim();
+    
+    if (orderData.description !== undefined) updatePayload.description = orderData.description?.trim() || null;
+    if (orderData.comments !== undefined) updatePayload.comments = orderData.comments?.trim() || null;
+    if (orderData.items) updatePayload.items = orderData.items;
+
+    // تحديث بيانات السيارة مع الحقول الجديدة
+    if (this.hasVehicleDataUpdates(orderData)) {
+      updatePayload.vehicleData = {
+        update: {
+          vehicleOwner: orderData.vehicleOwner?.trim() || undefined,
+          licensePlateNumber: orderData.licensePlateNumber?.trim() || undefined,
+          vin: orderData.vin?.trim() || undefined,
+          brand: orderData.brand?.trim() || undefined,
+          model: orderData.model?.trim() || undefined,
+          year: orderData.year || undefined,
+          color: orderData.color?.trim() || undefined,
+          
+          // تحديث الحقول الجديدة
+          ukz: orderData.ukz?.trim() || undefined,
+          fin: orderData.fin?.trim() || undefined,
+          bestellnummer: orderData.bestellnummer?.trim() || undefined,
+          leasingvertragsnummer: orderData.leasingvertragsnummer?.trim() || undefined,
+          kostenstelle: orderData.kostenstelle?.trim() || undefined,
+          bemerkung: orderData.bemerkung?.trim() || undefined,
+          typ: orderData.typ?.trim() || undefined,
+          updatedAt: new Date(),
+        }
+      };
+    }
+
+    // تحديث بيانات الخدمة
+    if (this.hasServiceDataUpdates(orderData)) {
+      updatePayload.service = {
+        update: {
+          vehicleType: orderData.vehicleType?.trim() || undefined,
+          serviceType: orderData.serviceType || undefined,
+          description: orderData.serviceDescription?.trim() || undefined,
+          updatedAt: new Date(),
+        }
+      };
+    }
+
+    // باقي كود تحديث العناوين...
+    if (clientAddress && this.validateAddress(clientAddress)) {
+      updatePayload.clientAddress = {
+        upsert: {
+          create: {
+            street: clientAddress.street.trim(),
+            houseNumber: clientAddress.houseNumber.trim(),
+            zipCode: clientAddress.zipCode.trim(),
+            city: clientAddress.city.trim(),
+            country: clientAddress.country?.trim() || 'Deutschland',
+          },
+          update: {
+            street: clientAddress.street.trim(),
+            houseNumber: clientAddress.houseNumber.trim(),
+            zipCode: clientAddress.zipCode.trim(),
+            city: clientAddress.city.trim(),
+            country: clientAddress.country?.trim() || 'Deutschland',
+            updatedAt: new Date(),
+          }
+        }
+      };
+    }
+
+    if (billingAddress && this.validateAddress(billingAddress)) {
+      updatePayload.billingAddress = {
+        upsert: {
+          create: {
+            street: billingAddress.street.trim(),
+            houseNumber: billingAddress.houseNumber.trim(),
+            zipCode: billingAddress.zipCode.trim(),
+            city: billingAddress.city.trim(),
+            country: billingAddress.country?.trim() || 'Deutschland',
+          },
+          update: {
+            street: billingAddress.street.trim(),
+            houseNumber: billingAddress.houseNumber.trim(),
+            zipCode: billingAddress.zipCode.trim(),
+            city: billingAddress.city.trim(),
+            country: billingAddress.country?.trim() || 'Deutschland',
+            updatedAt: new Date(),
+          }
+        }
+      };
+    }
+
+    if (pickupAddress && this.validateAddress(pickupAddress)) {
+      updatePayload.pickupAddress = {
+        update: {
+          street: pickupAddress.street.trim(),
+          houseNumber: pickupAddress.houseNumber.trim(),
+          zipCode: pickupAddress.zipCode.trim(),
+          city: pickupAddress.city.trim(),
+          country: pickupAddress.country?.trim() || 'Deutschland',
+
+          date: pickupAddress.date ? new Date(pickupAddress.date) : null,
+          companyName: pickupAddress.companyName?.trim() || null,
+          contactPersonName: pickupAddress.contactPersonName?.trim() || null,
+          contactPersonPhone: pickupAddress.contactPersonPhone?.trim() || null,
+          contactPersonEmail: pickupAddress.contactPersonEmail?.trim() || null,
+          fuelLevel: pickupAddress.fuelLevel || null,
+          fuelMeter: pickupAddress.fuelMeter || null,
+          updatedAt: new Date(),
+        }
+      };
+    }
+
+    if (deliveryAddress && this.validateAddress(deliveryAddress)) {
+      updatePayload.deliveryAddress = {
+        update: {
+          street: deliveryAddress.street.trim(),
+          houseNumber: deliveryAddress.houseNumber.trim(),
+          zipCode: deliveryAddress.zipCode.trim(),
+          city: deliveryAddress.city.trim(),
+          country: deliveryAddress.country?.trim() || 'Deutschland',
+          
+          date: deliveryAddress.date ? new Date(deliveryAddress.date) : null,
+          companyName: deliveryAddress.companyName?.trim() || null,
+          contactPersonName: deliveryAddress.contactPersonName?.trim() || null,
+          contactPersonPhone: deliveryAddress.contactPersonPhone?.trim() || null,
+          contactPersonEmail: deliveryAddress.contactPersonEmail?.trim() || null,
+          fuelLevel: deliveryAddress.fuelLevel || null,
+          fuelMeter: deliveryAddress.fuelMeter || null,
+          updatedAt: new Date(),
+                }
+      };
+    }
+     // معالجة تحديث الأضرار
+    if (damages !== undefined) {
+      if (damages && damages.length > 0) {
+        updatePayload.damages = {
+          // حذف الأضرار الموجودة
+          deleteMany: {},
+          // إضافة الأضرار الجديدة
+          create: damages.map(damage => ({
+            side: damage.side,
+            type: damage.type,
+            description: damage.description?.trim() || null,
+          }))
+        };
+        console.log('🔧 تحديث الأضرار:', damages.length, 'ضرر');
+      } else {
+        // حذف جميع الأضرار إذا كانت القائمة فارغة
+        updatePayload.damages = {
+          deleteMany: {}
+        };
+        console.log('🗑️ حذف جميع الأضرار');
+      }
+    }
+
+    console.log('📦 البيانات المحضرة للتحديث:', JSON.stringify(updatePayload, null, 2));
+
+    const updatedOrder = await this.prisma.order.update({
+      where: { id },
+      data: updatePayload,
+      include: {
+        clientAddress: true,
+        billingAddress: true,
+        pickupAddress: true,
+        deliveryAddress: true,
+        vehicleData: true,
+        service: true,
+        driver: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          }
+        },
+        images: {
+          orderBy: { createdAt: 'desc' }
+        },
+        driverSignature: true,
+        customerSignature: true,
+        expenses: true,
+
+        damages: {
+          orderBy: {
+            createdAt: 'asc'
+          }
+        },
+      },
+    });
+
+    console.log('✅ تم تحديث الطلبية بنجاح');
+    
+    // إرجاع البيانات بتنسيق متوافق مع الفرونت إند
+    return this.formatOrderResponse(updatedOrder);
+
+  } catch (error) {
+    console.error('❌ خطأ في تحديث الطلبية:', error);
+    
+    if (error.code === 'P2002') {
+      throw new BadRequestException('قيمة مكررة في أحد الحقول الفريدة');
+    }
+    
+    if (error.code === 'P2025') {
+      throw new NotFoundException('الطلبية أو أحد العناصر المرتبطة غير موجود');
+    }
+    
+    throw new BadRequestException(`فشل في تحديث الطلبية: ${error.message}`);
+  }
+}
+
+
+private hasVehicleDataUpdates(orderData: Partial<CreateOrderDto>): boolean {
+  return !!(
+    orderData.vehicleOwner ||
+    orderData.licensePlateNumber ||
+    orderData.vin ||
+    orderData.brand ||
+    orderData.model ||
+    orderData.year ||
+    orderData.color ||
+    orderData.ukz ||
+    orderData.fin ||
+    orderData.bestellnummer ||
+    orderData.leasingvertragsnummer ||
+    orderData.kostenstelle ||
+    orderData.bemerkung ||
+    orderData.typ
+  );
+}
+
+private hasServiceDataUpdates(orderData: Partial<CreateOrderDto>): boolean {
+  return !!(
+    orderData.vehicleType ||
+    orderData.serviceType ||
+    orderData.serviceDescription
+  );
+}
+
+
+
 
   // دالة مساعدة للتحقق من صحة العنوان
   private validateAddress(address: CreateAddressDto): boolean {
@@ -369,11 +596,20 @@ private formatOrderResponse(order: any) {
     client: order.client,
     clientPhone: order.clientPhone,
     clientEmail: order.clientEmail,
+    clientAddress: order.clientAddress,
+    
+    // بيانات صاحب الفاتورة
+    isSameBilling: order.isSameBilling,
+    billingName: order.billingName,
+    billingPhone: order.billingPhone,
+    billingEmail: order.billingEmail,
+    billingAddress: order.billingAddress,
+
     description: order.description,
     comments: order.comments,
     items: order.items || [],
     
-    // بيانات السيارة
+    // بيانات السيارة مع الحقول الجديدة
     vehicleOwner: order.vehicleData?.vehicleOwner,
     licensePlateNumber: order.vehicleData?.licensePlateNumber,
     vin: order.vehicleData?.vin,
@@ -381,6 +617,15 @@ private formatOrderResponse(order: any) {
     model: order.vehicleData?.model,
     year: order.vehicleData?.year,
     color: order.vehicleData?.color,
+    
+    // إضافة الحقول الجديدة
+    ukz: order.vehicleData?.ukz,
+    fin: order.vehicleData?.fin,
+    bestellnummer: order.vehicleData?.bestellnummer,
+    leasingvertragsnummer: order.vehicleData?.leasingvertragsnummer,
+    kostenstelle: order.vehicleData?.kostenstelle,
+    bemerkung: order.vehicleData?.bemerkung,
+    typ: order.vehicleData?.typ,
     
     // بيانات الخدمة
     vehicleType: order.service?.vehicleType,
@@ -391,8 +636,11 @@ private formatOrderResponse(order: any) {
     pickupAddress: order.pickupAddress,
     deliveryAddress: order.deliveryAddress,
     
+    damages: order.damages || [],
+
+
     // الحالة والسائق
-    status: status, // الحالة المُنسَّقة
+    status: status,
     driverId: order.driverId,
     driver: order.driver,
     
@@ -420,7 +668,9 @@ private formatOrderResponse(order: any) {
     status: formattedOrder.status,
     hasImages: formattedOrder.hasImages,
     hasSignatures: formattedOrder.hasAllSignatures,
-    isReady: formattedOrder.isReadyForCompletion
+    isReady: formattedOrder.isReadyForCompletion,
+    damagesCount: formattedOrder.damages.length,
+
   });
   
   return formattedOrder;
@@ -555,17 +805,16 @@ async remove(id: string, userId: string, userRole: UserRole) {
     // حذف الملفات المرتبطة بالطلبية
     await this.deleteOrderFiles(existingOrder);
 
-    // حذف الطلبية من قاعدة البيانات
+    // حذف الطلبية من قاعدة البيانات (سيتم حذف الأضرار تلقائياً بسبب onDelete: Cascade)
     await this.prisma.order.delete({
       where: { id },
     });
 
-    console.log('✅ تم حذف الطلبية بنجاح');
+    console.log('✅ تم حذف الطلبية وجميع الأضرار المرتبطة بها بنجاح');
     
-    // إرجاع object مع تفاصيل أكثر
     return {
       success: true,
-      message: 'تم حذف الطلبية بنجاح',
+      message: 'تم حذف الطلبية وجميع الأضرار المرتبطة بها بنجاح',
       deletedOrderId: id,
       deletedAt: new Date().toISOString()
     };
@@ -1131,5 +1380,626 @@ async addOrderExpenses(
     throw new BadRequestException(`فشل في إضافة المصاريف: ${error.message}`);
   }
 }
+
+
+
+// 1. تحديث أضرار الطلبية
+async updateOrderDamages(
+  orderId: string,
+  damages: CreateVehicleDamageDto[],
+  userId: string,
+  userRole: UserRole,
+) {
+  console.log('🔧 تحديث أضرار الطلبية:', orderId);
+  console.log('📊 عدد الأضرار الجديدة:', damages.length);
+
+  try {
+    // التحقق من وجود الطلبية والصلاحية
+    const order = await this.findOne(orderId, userId, userRole);
+    
+    if (!order) {
+      throw new NotFoundException('الطلبية غير موجودة');
+    }
+
+    // تحديث الأضرار باستخدام transaction
+    const updatedOrder = await this.prisma.$transaction(async (prisma) => {
+      // حذف جميع الأضرار الموجودة
+      await prisma.vehicleDamage.deleteMany({
+        where: { orderId },
+      });
+
+      // إضافة الأضرار الجديدة
+      if (damages && damages.length > 0) {
+        await prisma.vehicleDamage.createMany({
+          data: damages.map(damage => ({
+            orderId,
+            side: damage.side,
+            type: damage.type,
+            description: damage.description?.trim() || null,
+          })),
+        });
+      }
+
+      // الحصول على الطلبية المحدثة
+      return await prisma.order.findUnique({
+        where: { id: orderId },
+        include: {
+          clientAddress: true,
+          billingAddress: true,
+          pickupAddress: true,
+          deliveryAddress: true,
+          vehicleData: true,
+          service: true,
+          driver: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            }
+          },
+          images: true,
+          driverSignature: true,
+          customerSignature: true,
+          expenses: true,
+          damages: {
+            orderBy: {
+              createdAt: 'asc'
+            }
+          },
+        },
+      });
+    });
+
+    console.log('✅ تم تحديث الأضرار بنجاح');
+    console.log('🔧 عدد الأضرار بعد التحديث:', updatedOrder?.damages?.length || 0);
+    
+    return this.formatOrderResponse(updatedOrder);
+
+  } catch (error) {
+    if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      throw error;
+    }
+    console.error('❌ خطأ في تحديث الأضرار:', error);
+    throw new BadRequestException(`فشل في تحديث الأضرار: ${error.message}`);
+  }
+}
+
+// 2. الحصول على أضرار طلبية معينة
+async getOrderDamages(
+  orderId: string,
+  userId: string,
+  userRole: UserRole,
+) {
+  console.log('📋 جلب أضرار الطلبية:', orderId);
+
+  try {
+    // التحقق من الصلاحية
+    await this.findOne(orderId, userId, userRole);
+
+    // جلب الأضرار
+    const damages = await this.prisma.vehicleDamage.findMany({
+      where: { orderId },
+      orderBy: {
+        createdAt: 'asc'
+      }
+    });
+
+    console.log('✅ تم جلب الأضرار:', damages.length, 'ضرر');
+    
+    return damages;
+
+  } catch (error) {
+    if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      throw error;
+    }
+    console.error('❌ خطأ في جلب الأضرار:', error);
+    throw new BadRequestException(`فشل في جلب الأضرار: ${error.message}`);
+  }
+}
+
+// 3. حذف ضرر معين
+async deleteSpecificDamage(
+  orderId: string,
+  damageId: string,
+  userId: string,
+  userRole: UserRole,
+) {
+  console.log('🗑️ حذف ضرر معين:', damageId, 'من الطلبية:', orderId);
+
+  try {
+    // التحقق من الصلاحية
+    await this.findOne(orderId, userId, userRole);
+
+    // العثور على الضرر
+    const damage = await this.prisma.vehicleDamage.findUnique({
+      where: { id: damageId },
+    });
+
+    if (!damage) {
+      throw new NotFoundException(`الضرر غير موجود: ${damageId}`);
+    }
+
+    if (damage.orderId !== orderId) {
+      throw new BadRequestException('الضرر لا ينتمي لهذه الطلبية');
+    }
+
+    // حذف الضرر
+    await this.prisma.vehicleDamage.delete({
+      where: { id: damageId },
+    });
+
+    console.log('✅ تم حذف الضرر بنجاح');
+    return { message: 'تم حذف الضرر بنجاح' };
+
+  } catch (error) {
+    if (error instanceof NotFoundException || error instanceof ForbiddenException || error instanceof BadRequestException) {
+      throw error;
+    }
+    console.error('❌ خطأ في حذف الضرر:', error);
+    throw new BadRequestException(`فشل في حذف الضرر: ${error.message}`);
+  }
+}
+
+// 4. إحصائيات الأضرار
+async getDamageStatistics(
+  orderId: string,
+  userId: string,
+  userRole: UserRole,
+) {
+  console.log('📊 حساب إحصائيات الأضرار للطلبية:', orderId);
+
+  try {
+    // التحقق من الصلاحية
+    await this.findOne(orderId, userId, userRole);
+
+    // جلب الأضرار
+    const damages = await this.prisma.vehicleDamage.findMany({
+      where: { orderId },
+    });
+
+    // حساب الإحصائيات
+    const statistics = {
+      totalDamages: damages.length,
+      damagesBySide: this.groupDamagesBySide(damages),
+      damagesByType: this.groupDamagesByType(damages),
+      mostDamagedSide: this.getMostDamagedSide(damages),
+      mostCommonDamageType: this.getMostCommonDamageType(damages),
+      hasDamages: damages.length > 0,
+      sides: this.getUniqueSides(damages),
+      types: this.getUniqueTypes(damages),
+      damagesWithDescription: damages.filter(d => d.description).length,
+      severityLevel: this.calculateSeverityLevel(damages),
+    };
+
+    console.log('📊 إحصائيات الأضرار:', statistics);
+    return statistics;
+
+  } catch (error) {
+    if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      throw error;
+    }
+    console.error('❌ خطأ في حساب إحصائيات الأضرار:', error);
+    throw new BadRequestException(`فشل في حساب الإحصائيات: ${error.message}`);
+  }
+}
+
+// 5. دوال مساعدة للإحصائيات
+private groupDamagesBySide(damages: any[]) {
+  const grouped = {};
+  damages.forEach(damage => {
+    const side = damage.side;
+    if (!grouped[side]) {
+      grouped[side] = 0;
+    }
+    grouped[side]++;
+  });
+  return grouped;
+}
+
+private groupDamagesByType(damages: any[]) {
+  const grouped = {};
+  damages.forEach(damage => {
+    const type = damage.type;
+    if (!grouped[type]) {
+      grouped[type] = 0;
+    }
+    grouped[type]++;
+  });
+  return grouped;
+}
+
+private getMostDamagedSide(damages: any[]): string | null {
+  if (damages.length === 0) return null;
+  
+  const sideCount = this.groupDamagesBySide(damages);
+  const mostDamaged = Object.entries(sideCount).reduce((a, b) => 
+    sideCount[a[0]] > sideCount[b[0]] ? a : b
+  );
+  
+  return mostDamaged[0];
+}
+
+private getMostCommonDamageType(damages: any[]): string | null {
+  if (damages.length === 0) return null;
+  
+  const typeCount = this.groupDamagesByType(damages);
+  const mostCommon = Object.entries(typeCount).reduce((a, b) => 
+    typeCount[a[0]] > typeCount[b[0]] ? a : b
+  );
+  
+  return mostCommon[0];
+}
+
+private getUniqueSides(damages: any[]): string[] {
+  return [...new Set(damages.map(d => d.side))];
+}
+
+private getUniqueTypes(damages: any[]): string[] {
+  return [...new Set(damages.map(d => d.type))];
+}
+
+private calculateSeverityLevel(damages: any[]): string {
+  if (damages.length === 0) return 'NONE';
+  if (damages.length <= 2) return 'LOW';
+  if (damages.length <= 5) return 'MEDIUM';
+  if (damages.length <= 8) return 'HIGH';
+  return 'SEVERE';
+}
+
+// 6. إضافة ضرر واحد
+async addSingleDamage(
+  orderId: string,
+  damageData: CreateVehicleDamageDto,
+  userId: string,
+  userRole: UserRole,
+) {
+  console.log('➕ إضافة ضرر جديد للطلبية:', orderId);
+  console.log('📊 بيانات الضرر:', damageData);
+
+  try {
+    // التحقق من الصلاحية
+    await this.findOne(orderId, userId, userRole);
+
+    // التحقق من عدم وجود نفس الضرر
+    const existingDamage = await this.prisma.vehicleDamage.findFirst({
+      where: {
+        orderId,
+        side: damageData.side,
+        type: damageData.type,
+      },
+    });
+
+    if (existingDamage) {
+      throw new BadRequestException('هذا الضرر موجود بالفعل في نفس الجانب');
+    }
+
+    // إضافة الضرر الجديد
+    const newDamage = await this.prisma.vehicleDamage.create({
+      data: {
+        orderId,
+        side: damageData.side,
+        type: damageData.type,
+        description: damageData.description?.trim() || null,
+      },
+    });
+
+    console.log('✅ تم إضافة الضرر بنجاح:', newDamage.id);
+    return newDamage;
+
+  } catch (error) {
+    if (error instanceof NotFoundException || error instanceof ForbiddenException || error instanceof BadRequestException) {
+      throw error;
+    }
+    console.error('❌ خطأ في إضافة الضرر:', error);
+    throw new BadRequestException(`فشل في إضافة الضرر: ${error.message}`);
+  }
+}
+
+// 7. تحديث ضرر معين
+async updateSingleDamage(
+  orderId: string,
+  damageId: string,
+  damageData: Partial<CreateVehicleDamageDto>,
+  userId: string,
+  userRole: UserRole,
+) {
+  console.log('📝 تحديث ضرر معين:', damageId);
+  console.log('📊 البيانات الجديدة:', damageData);
+
+  try {
+    // التحقق من الصلاحية
+    await this.findOne(orderId, userId, userRole);
+
+    // العثور على الضرر
+    const existingDamage = await this.prisma.vehicleDamage.findUnique({
+      where: { id: damageId },
+    });
+
+    if (!existingDamage) {
+      throw new NotFoundException(`الضرر غير موجود: ${damageId}`);
+    }
+
+    if (existingDamage.orderId !== orderId) {
+      throw new BadRequestException('الضرر لا ينتمي لهذه الطلبية');
+    }
+
+    // تحديث الضرر
+    const updatedDamage = await this.prisma.vehicleDamage.update({
+      where: { id: damageId },
+      data: {
+        side: damageData.side || existingDamage.side,
+        type: damageData.type || existingDamage.type,
+        description: damageData.description !== undefined 
+          ? (damageData.description?.trim() || null)
+          : existingDamage.description,
+        updatedAt: new Date(),
+      },
+    });
+
+    console.log('✅ تم تحديث الضرر بنجاح');
+    return updatedDamage;
+
+  } catch (error) {
+    if (error instanceof NotFoundException || error instanceof ForbiddenException || error instanceof BadRequestException) {
+      throw error;
+    }
+    console.error('❌ خطأ في تحديث الضرر:', error);
+    throw new BadRequestException(`فشل في تحديث الضرر: ${error.message}`);
+  }
+}
+
+// 8. حذف جميع أضرار طلبية
+async clearAllOrderDamages(
+  orderId: string,
+  userId: string,
+  userRole: UserRole,
+) {
+  console.log('🗑️ حذف جميع أضرار الطلبية:', orderId);
+
+  try {
+    // التحقق من الصلاحية
+    await this.findOne(orderId, userId, userRole);
+
+    // حذف جميع الأضرار
+    const deleteResult = await this.prisma.vehicleDamage.deleteMany({
+      where: { orderId },
+    });
+
+    console.log('✅ تم حذف جميع الأضرار:', deleteResult.count, 'ضرر');
+    
+    return {
+      message: 'تم حذف جميع الأضرار بنجاح',
+      deletedCount: deleteResult.count,
+    };
+
+  } catch (error) {
+    if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      throw error;
+    }
+    console.error('❌ خطأ في حذف جميع الأضرار:', error);
+    throw new BadRequestException(`فشل في حذف الأضرار: ${error.message}`);
+  }
+}
+
+
+// إضافة دوال إضافية في OrdersService
+
+// 9. الحصول على الأضرار حسب الجانب
+async getDamagesBySide(
+  orderId: string,
+  side: VehicleSide,
+  userId: string,
+  userRole: UserRole,
+) {
+  console.log('📋 جلب أضرار الجانب:', side, 'للطلبية:', orderId);
+
+  try {
+    // التحقق من الصلاحية
+    await this.findOne(orderId, userId, userRole);
+
+    // جلب الأضرار حسب الجانب
+    const damages = await this.prisma.vehicleDamage.findMany({
+      where: {
+        orderId,
+        side,
+      },
+      orderBy: {
+        createdAt: 'asc'
+      }
+    });
+
+    console.log('✅ تم جلب أضرار الجانب:', damages.length, 'ضرر');
+    return damages;
+
+  } catch (error) {
+    if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      throw error;
+    }
+    console.error('❌ خطأ في جلب أضرار الجانب:', error);
+    throw new BadRequestException(`فشل في جلب أضرار الجانب: ${error.message}`);
+  }
+}
+
+// 10. الحصول على الأضرار حسب النوع
+async getDamagesByType(
+  orderId: string,
+  type: DamageType,
+  userId: string,
+  userRole: UserRole,
+) {
+  console.log('📋 جلب أضرار النوع:', type, 'للطلبية:', orderId);
+
+  try {
+    // التحقق من الصلاحية
+    await this.findOne(orderId, userId, userRole);
+
+    // جلب الأضرار حسب النوع
+    const damages = await this.prisma.vehicleDamage.findMany({
+      where: {
+        orderId,
+        type,
+      },
+      orderBy: {
+        createdAt: 'asc'
+      }
+    });
+
+    console.log('✅ تم جلب أضرار النوع:', damages.length, 'ضرر');
+    return damages;
+
+  } catch (error) {
+    if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      throw error;
+    }
+    console.error('❌ خطأ في جلب أضرار النوع:', error);
+    throw new BadRequestException(`فشل في جلب أضرار النوع: ${error.message}`);
+  }
+}
+
+// 11. إنشاء تقرير الأضرار
+async generateDamageReport(
+  orderId: string,
+  userId: string,
+  userRole: UserRole,
+) {
+  console.log('📊 إنشاء تقرير الأضرار للطلبية:', orderId);
+
+  try {
+    // التحقق من الصلاحية
+    const order = await this.findOne(orderId, userId, userRole);
+
+    // جلب جميع الأضرار
+    const damages = await this.prisma.vehicleDamage.findMany({
+      where: { orderId },
+      orderBy: {
+        createdAt: 'asc'
+      }
+    });
+
+    // حساب الإحصائيات المفصلة
+    const statistics = await this.getDamageStatistics(orderId, userId, userRole);
+
+    // إنشاء التقرير
+    const report = {
+      order: {
+        id: order.id,
+        orderNumber: order.orderNumber,
+        client: order.client,
+        vehicleOwner: order.vehicleOwner,
+        licensePlateNumber: order.licensePlateNumber,
+        createdAt: order.createdAt,
+      },
+      damages: {
+        total: damages.length,
+        list: damages.map(damage => ({
+          id: damage.id,
+          side: damage.side,
+          sideText: this.getVehicleSideText(damage.side),
+          type: damage.type,
+          typeText: this.getDamageTypeText(damage.type),
+          description: damage.description,
+          createdAt: damage.createdAt,
+        })),
+        statistics,
+      },
+      summary: {
+        hasDamages: damages.length > 0,
+        severityLevel: statistics.severityLevel,
+        affectedSides: statistics.sides.length,
+        differentDamageTypes: statistics.types.length,
+        damagesWithDescription: statistics.damagesWithDescription,
+        reportGeneratedAt: new Date(),
+      },
+      recommendations: this.generateDamageRecommendations(damages, statistics),
+    };
+
+    console.log('📊 تم إنشاء تقرير الأضرار بنجاح');
+    return report;
+
+  } catch (error) {
+    if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      throw error;
+    }
+    console.error('❌ خطأ في إنشاء تقرير الأضرار:', error);
+    throw new BadRequestException(`فشل في إنشاء التقرير: ${error.message}`);
+  }
+}
+
+// 12. دوال مساعدة للنصوص
+private getVehicleSideText(side: VehicleSide): string {
+  const sideTexts = {
+    [VehicleSide.FRONT]: 'الأمام',
+    [VehicleSide.REAR]: 'الخلف',
+    [VehicleSide.LEFT]: 'اليسار',
+    [VehicleSide.RIGHT]: 'اليمين',
+    [VehicleSide.TOP]: 'الأعلى',
+  };
+  return sideTexts[side] || side;
+}
+
+private getDamageTypeText(type: DamageType): string {
+  const typeTexts = {
+    [DamageType.DENT_BUMP]: 'خدش/نتوء',
+    [DamageType.STONE_CHIP]: 'رقائق حجرية',
+    [DamageType.SCRATCH_GRAZE]: 'خدش/كشط',
+    [DamageType.PAINT_DAMAGE]: 'ضرر طلاء',
+    [DamageType.CRACK_BREAK]: 'تشقق/كسر',
+    [DamageType.MISSING]: 'مفقود',
+  };
+  return typeTexts[type] || type;
+}
+
+// 13. إنشاء التوصيات بناءً على الأضرار
+private generateDamageRecommendations(damages: any[], statistics: any): string[] {
+  const recommendations = [];
+
+  if (damages.length === 0) {
+    recommendations.push('لا توجد أضرار مسجلة - السيارة في حالة جيدة');
+    return recommendations;
+  }
+
+  // توصيات حسب مستوى الخطورة
+  switch (statistics.severityLevel) {
+    case 'LOW':
+      recommendations.push('أضرار طفيفة - يُنصح بالإصلاح عند الحاجة');
+      break;
+    case 'MEDIUM':
+      recommendations.push('أضرار متوسطة - يُنصح بالإصلاح في أقرب وقت');
+      break;
+    case 'HIGH':
+      recommendations.push('أضرار كثيرة - يتطلب إصلاح فوري');
+      break;
+    case 'SEVERE':
+      recommendations.push('أضرار جسيمة - يتطلب فحص شامل وإصلاح عاجل');
+      break;
+  }
+
+  // توصيات حسب نوع الأضرار
+  const damageTypes = statistics.types;
+  
+  if (damageTypes.includes('CRACK_BREAK')) {
+    recommendations.push('يوجد تشققات أو كسور - يتطلب فحص هيكلي');
+  }
+  
+  if (damageTypes.includes('MISSING')) {
+    recommendations.push('يوجد أجزاء مفقودة - يتطلب استبدال فوري');
+  }
+  
+  if (damageTypes.includes('PAINT_DAMAGE')) {
+    recommendations.push('يوجد أضرار في الطلاء - يُنصح بإعادة الطلاء لمنع الصدأ');
+  }
+
+  // توصيات حسب الجوانب المتضررة
+  if (statistics.sides.length >= 4) {
+    recommendations.push('أضرار في معظم جوانب السيارة - يتطلب فحص شامل');
+  }
+
+  if (statistics.mostDamagedSide === 'FRONT') {
+    recommendations.push('أضرار مركزة في المقدمة - فحص أنظمة السلامة الأمامية');
+  }
+
+  return recommendations;
+}
+
 
 }

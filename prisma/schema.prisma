@@ -54,6 +54,45 @@ model User {
   CANCELLED   // ملغي
 }
 
+
+enum VehicleSide {
+  FRONT      // الأمام
+  REAR       // الخلف
+  LEFT       // اليسار
+  RIGHT      // اليمين
+  TOP        // الأعلى
+}
+
+enum DamageType {
+  DENT_BUMP      // خدش/نتوء
+  STONE_CHIP     // رقائق حجرية
+  SCRATCH_GRAZE  // خدش/كشط
+  PAINT_DAMAGE   // ضرر طلاء
+  CRACK_BREAK    // تشقق/كسر
+  MISSING        // مفقود
+}
+
+// نموذج جديد للأضرار
+model VehicleDamage {
+  id          String      @id @default(cuid())
+  side        VehicleSide
+  type        DamageType
+  description String?     // وصف الضرر (اختياري)
+  
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  
+  // Foreign Key
+  orderId     String
+  
+  // Relations
+  order       Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  // فهرس مركب لتجنب تكرار نفس الضرر في نفس الطلبية
+  @@unique([orderId, side, type])
+  @@map("vehicle_damages")
+}
+
 model Order {
   id                    String      @id @default(cuid())
   orderNumber           Int         @unique @default(autoincrement())
@@ -65,11 +104,23 @@ model Order {
   client                String
   clientPhone           String?
   clientEmail           String?
+  clientAddressId       String?     // موجود
+  clientAddress         Address?    @relation("ClientAddress", fields: [clientAddressId], references: [id], onDelete: SetNull)  // موجود
+
+
+   // Billing Information (صاحب الفاتورة)
+  isSameBilling         Boolean     @default(true)  // جديد - هل نفس العميل؟
+  billingName           String?     // جديد - اسم صاحب الفاتورة
+  billingPhone          String?     // جديد - هاتف صاحب الفاتورة
+  billingEmail          String?     // جديد - بريد صاحب الفاتورة
+  billingAddressId      String?
+  billingAddress        Address?    @relation("BillingAddress", fields: [billingAddressId], references: [id], onDelete: SetNull)
+    
   
   // Order Details
   description           String?
   comments              String?
-  items                 String[]    @default([]) // قائمة العناصر
+  items       VehicleItem[]
   
   // Timestamps
   createdAt             DateTime    @default(now())
@@ -82,8 +133,11 @@ model Order {
   driver                User                @relation(fields: [driverId], references: [id])
   
   // Addresses
-  pickupAddress         Address?            @relation("PickupAddress")
-  deliveryAddress       Address?            @relation("DeliveryAddress")
+  pickupAddressId       String?     // إضافة هذا السطر
+  pickupAddress         Address?    @relation("PickupAddress", fields: [pickupAddressId], references: [id], onDelete: SetNull)  // تعديل هذا السطر
+  
+  deliveryAddressId     String?     // إضافة هذا السطر
+  deliveryAddress       Address?    @relation("DeliveryAddress", fields: [deliveryAddressId], references: [id], onDelete: SetNull)  // تعديل هذا السطر
   
   // Order Components
   vehicleData           VehicleData?
@@ -94,6 +148,10 @@ model Order {
   driverSignatureId     String?     @unique
   customerSignatureId   String?     @unique
   
+
+  damages               VehicleDamage[]
+
+
   driverSignature       Signature?  @relation("DriverSignature", fields: [driverSignatureId], references: [id], onDelete: SetNull)
   customerSignature     Signature?  @relation("CustomerSignature", fields: [customerSignatureId], references: [id], onDelete: SetNull)
   
@@ -103,6 +161,34 @@ model Order {
   images                Image[]
 
   @@map("orders")
+}
+
+
+// إضافة enum للأغراض
+enum VehicleItem {
+  PARTITION_NET
+  WINTER_TIRES
+  HUBCAPS
+  REAR_PARCEL_SHELF
+  NAVIGATION_SYSTEM
+  TRUNK_ROLL_COVER
+  SAFETY_VEST
+  VEHICLE_KEYS
+  WARNING_TRIANGLE
+  RADIO
+  ALLOY_WHEELS
+  SUMMER_TIRES
+  OPERATING_MANUAL
+  REGISTRATION_DOCUMENT
+  COMPRESSOR_REPAIR_KIT
+  TOOLS_JACK
+  SECOND_SET_OF_TIRES
+  EMERGENCY_WHEEL
+  ANTENNA
+  FUEL_CARD
+  FIRST_AID_KIT
+  SPARE_TIRE
+  SERVICE_BOOK
 }
 
 model Address {
@@ -116,13 +202,27 @@ model Address {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  date                DateTime?  // تاريخ الاستلام/التسليم
+  companyName         String?    // اسم الشركة
+  contactPersonName   String?    // اسم الموظف المختص
+  contactPersonPhone  String?    // رقم هاتف الموظف
+  contactPersonEmail  String?    // بريد الموظف
+  fuelLevel          Int?       // مستوى البنزين من 0 إلى 8
+  fuelMeter          Float?     // عداد البنزين
+
   // Foreign Keys
-  pickupOrderId    String? @unique
-  deliveryOrderId  String? @unique
+  // pickupOrderId    String? @unique
+  // deliveryOrderId  String? @unique
 
   // Relations
-  pickupOrder    Order? @relation("PickupAddress", fields: [pickupOrderId], references: [id], onDelete: Cascade)
-  deliveryOrder  Order? @relation("DeliveryAddress", fields: [deliveryOrderId], references: [id], onDelete: Cascade)
+  // pickupOrder    Order? @relation("PickupAddress", fields: [pickupOrderId], references: [id], onDelete: Cascade)
+  // deliveryOrder  Order? @relation("DeliveryAddress", fields: [deliveryOrderId], references: [id], onDelete: Cascade)
+
+  clientOrders     Order[] @relation("ClientAddress")
+  billingOrders    Order[] @relation("BillingAddress")
+  pickupOrders     Order[] @relation("PickupAddress")    // إضافة هذا السطر
+  deliveryOrders   Order[] @relation("DeliveryAddress")  // إضافة هذا السطر
+  
 
   @@map("addresses")
 }
@@ -137,6 +237,14 @@ model VehicleData {
   year                  Int?
   color                 String?
   
+  ukz                   String?  // ÜKZ
+  fin                   String?  // FIN
+  bestellnummer         String?  // Bestellnummer
+  leasingvertragsnummer String?  // Leasingvertragsnummer
+  kostenstelle          String?  // Kostenstelle
+  bemerkung             String?  // Bemerkung
+  typ                   String?  // Typ
+
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 

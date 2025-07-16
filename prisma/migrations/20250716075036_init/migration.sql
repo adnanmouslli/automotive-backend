@@ -10,6 +10,15 @@ CREATE TYPE "ImageCategory" AS ENUM ('PICKUP', 'DELIVERY', 'ADDITIONAL', 'DAMAGE
 -- CreateEnum
 CREATE TYPE "OrderStatus" AS ENUM ('PENDING', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED');
 
+-- CreateEnum
+CREATE TYPE "VehicleSide" AS ENUM ('FRONT', 'REAR', 'LEFT', 'RIGHT', 'TOP');
+
+-- CreateEnum
+CREATE TYPE "DamageType" AS ENUM ('DENT_BUMP', 'STONE_CHIP', 'SCRATCH_GRAZE', 'PAINT_DAMAGE', 'CRACK_BREAK', 'MISSING');
+
+-- CreateEnum
+CREATE TYPE "VehicleItem" AS ENUM ('PARTITION_NET', 'WINTER_TIRES', 'HUBCAPS', 'REAR_PARCEL_SHELF', 'NAVIGATION_SYSTEM', 'TRUNK_ROLL_COVER', 'SAFETY_VEST', 'VEHICLE_KEYS', 'WARNING_TRIANGLE', 'RADIO', 'ALLOY_WHEELS', 'SUMMER_TIRES', 'OPERATING_MANUAL', 'REGISTRATION_DOCUMENT', 'COMPRESSOR_REPAIR_KIT', 'TOOLS_JACK', 'SECOND_SET_OF_TIRES', 'EMERGENCY_WHEEL', 'ANTENNA', 'FUEL_CARD', 'FIRST_AID_KIT', 'SPARE_TIRE', 'SERVICE_BOOK');
+
 -- CreateTable
 CREATE TABLE "users" (
     "id" TEXT NOT NULL,
@@ -26,6 +35,19 @@ CREATE TABLE "users" (
 );
 
 -- CreateTable
+CREATE TABLE "vehicle_damages" (
+    "id" TEXT NOT NULL,
+    "side" "VehicleSide" NOT NULL,
+    "type" "DamageType" NOT NULL,
+    "description" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "orderId" TEXT NOT NULL,
+
+    CONSTRAINT "vehicle_damages_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "orders" (
     "id" TEXT NOT NULL,
     "orderNumber" SERIAL NOT NULL,
@@ -33,12 +55,20 @@ CREATE TABLE "orders" (
     "client" TEXT NOT NULL,
     "clientPhone" TEXT,
     "clientEmail" TEXT,
+    "clientAddressId" TEXT,
+    "isSameBilling" BOOLEAN NOT NULL DEFAULT true,
+    "billingName" TEXT,
+    "billingPhone" TEXT,
+    "billingEmail" TEXT,
+    "billingAddressId" TEXT,
     "description" TEXT,
     "comments" TEXT,
-    "items" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "items" "VehicleItem"[],
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "driverId" TEXT NOT NULL,
+    "pickupAddressId" TEXT,
+    "deliveryAddressId" TEXT,
     "driverSignatureId" TEXT,
     "customerSignatureId" TEXT,
 
@@ -56,8 +86,13 @@ CREATE TABLE "addresses" (
     "coordinates" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
-    "pickupOrderId" TEXT,
-    "deliveryOrderId" TEXT,
+    "date" TIMESTAMP(3),
+    "companyName" TEXT,
+    "contactPersonName" TEXT,
+    "contactPersonPhone" TEXT,
+    "contactPersonEmail" TEXT,
+    "fuelLevel" INTEGER,
+    "fuelMeter" DOUBLE PRECISION,
 
     CONSTRAINT "addresses_pkey" PRIMARY KEY ("id")
 );
@@ -72,6 +107,13 @@ CREATE TABLE "vehicle_data" (
     "model" TEXT,
     "year" INTEGER,
     "color" TEXT,
+    "ukz" TEXT,
+    "fin" TEXT,
+    "bestellnummer" TEXT,
+    "leasingvertragsnummer" TEXT,
+    "kostenstelle" TEXT,
+    "bemerkung" TEXT,
+    "typ" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "orderId" TEXT NOT NULL,
@@ -141,6 +183,9 @@ CREATE TABLE "images" (
 CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "vehicle_damages_orderId_side_type_key" ON "vehicle_damages"("orderId", "side", "type");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "orders_orderNumber_key" ON "orders"("orderNumber");
 
 -- CreateIndex
@@ -148,12 +193,6 @@ CREATE UNIQUE INDEX "orders_driverSignatureId_key" ON "orders"("driverSignatureI
 
 -- CreateIndex
 CREATE UNIQUE INDEX "orders_customerSignatureId_key" ON "orders"("customerSignatureId");
-
--- CreateIndex
-CREATE UNIQUE INDEX "addresses_pickupOrderId_key" ON "addresses"("pickupOrderId");
-
--- CreateIndex
-CREATE UNIQUE INDEX "addresses_deliveryOrderId_key" ON "addresses"("deliveryOrderId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "vehicle_data_orderId_key" ON "vehicle_data"("orderId");
@@ -165,19 +204,28 @@ CREATE UNIQUE INDEX "services_orderId_key" ON "services"("orderId");
 CREATE UNIQUE INDEX "expenses_orderId_key" ON "expenses"("orderId");
 
 -- AddForeignKey
+ALTER TABLE "vehicle_damages" ADD CONSTRAINT "vehicle_damages_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "orders"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "orders" ADD CONSTRAINT "orders_clientAddressId_fkey" FOREIGN KEY ("clientAddressId") REFERENCES "addresses"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "orders" ADD CONSTRAINT "orders_billingAddressId_fkey" FOREIGN KEY ("billingAddressId") REFERENCES "addresses"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "orders" ADD CONSTRAINT "orders_driverId_fkey" FOREIGN KEY ("driverId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "orders" ADD CONSTRAINT "orders_pickupAddressId_fkey" FOREIGN KEY ("pickupAddressId") REFERENCES "addresses"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "orders" ADD CONSTRAINT "orders_deliveryAddressId_fkey" FOREIGN KEY ("deliveryAddressId") REFERENCES "addresses"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "orders" ADD CONSTRAINT "orders_driverSignatureId_fkey" FOREIGN KEY ("driverSignatureId") REFERENCES "signatures"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "orders" ADD CONSTRAINT "orders_customerSignatureId_fkey" FOREIGN KEY ("customerSignatureId") REFERENCES "signatures"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "addresses" ADD CONSTRAINT "addresses_pickupOrderId_fkey" FOREIGN KEY ("pickupOrderId") REFERENCES "orders"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "addresses" ADD CONSTRAINT "addresses_deliveryOrderId_fkey" FOREIGN KEY ("deliveryOrderId") REFERENCES "orders"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "vehicle_data" ADD CONSTRAINT "vehicle_data_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "orders"("id") ON DELETE CASCADE ON UPDATE CASCADE;

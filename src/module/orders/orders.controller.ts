@@ -16,11 +16,12 @@ import {
   Query,
   NotFoundException,
   ForbiddenException,
+  Req,
 } from '@nestjs/common';
 import { OrdersService } from './orders.service';
-import { CreateOrderDto } from './dto/create-order.dto';
+import { CreateOrderDto, CreateVehicleDamageDto, UpdateDamagesDto } from './dto/create-order.dto';
 import { JwtAuthGuard } from 'src/common';
-import { UserRole } from '@prisma/client';
+import { DamageType, UserRole, VehicleSide } from '@prisma/client';
 
 interface AuthenticatedRequest extends Request {
   user: {
@@ -345,6 +346,298 @@ async deleteSignature(
     req.user.id,
     req.user.role as any
   );
+}
+
+
+@Patch(':id/damages')
+@UseGuards(JwtAuthGuard)
+async updateOrderDamages(
+  @Param('id') id: string,
+  @Body() updateDamagesDto: UpdateDamagesDto,
+  @Req() req: any,
+) {
+  console.log('🔧 تحديث أضرار الطلبية:', id);
+  console.log('📊 الأضرار الجديدة:', updateDamagesDto.damages);
+
+  try {
+    const updatedOrder = await this.ordersService.updateOrderDamages(
+      id,
+      updateDamagesDto.damages,
+      req.user.id,
+      req.user.role,
+    );
+
+    return {
+      success: true,
+      message: 'تم تحديث أضرار السيارة بنجاح',
+      data: updatedOrder,
+    };
+  } catch (error) {
+    console.error('❌ خطأ في تحديث الأضرار:', error);
+    throw error;
+  }
+}
+
+// 2. الحصول على أضرار طلبية معينة
+@Get(':id/damages')
+@UseGuards(JwtAuthGuard)
+async getOrderDamages(
+  @Param('id') id: string,
+  @Req() req: any,
+) {
+  console.log('📋 جلب أضرار الطلبية:', id);
+
+  try {
+    const damages = await this.ordersService.getOrderDamages(
+      id,
+      req.user.id,
+      req.user.role,
+    );
+
+    return {
+      success: true,
+      data: damages,
+    };
+  } catch (error) {
+    console.error('❌ خطأ في جلب الأضرار:', error);
+    throw error;
+  }
+}
+
+// 3. حذف ضرر معين
+@Delete(':id/damages/:damageId')
+@UseGuards(JwtAuthGuard)
+async deleteSpecificDamage(
+  @Param('id') id: string,
+  @Param('damageId') damageId: string,
+  @Req() req: any,
+) {
+  console.log('🗑️ حذف ضرر معين:', damageId, 'من الطلبية:', id);
+
+  try {
+    await this.ordersService.deleteSpecificDamage(
+      id,
+      damageId,
+      req.user.id,
+      req.user.role,
+    );
+
+    return {
+      success: true,
+      message: 'تم حذف الضرر بنجاح',
+    };
+  } catch (error) {
+    console.error('❌ خطأ في حذف الضرر:', error);
+    throw error;
+  }
+}
+
+// 4. إحصائيات الأضرار
+@Get(':id/damages/statistics')
+@UseGuards(JwtAuthGuard)
+async getDamageStatistics(
+  @Param('id') id: string,
+  @Req() req: any,
+) {
+  console.log('📊 جلب إحصائيات الأضرار للطلبية:', id);
+
+  try {
+    const statistics = await this.ordersService.getDamageStatistics(
+      id,
+      req.user.id,
+      req.user.role,
+    );
+
+    return {
+      success: true,
+      data: statistics,
+    };
+  } catch (error) {
+    console.error('❌ خطأ في جلب إحصائيات الأضرار:', error);
+    throw error;
+  }
+}
+
+
+// 5. إضافة ضرر واحد
+@Post(':id/damages')
+@UseGuards(JwtAuthGuard)
+async addSingleDamage(
+  @Param('id') id: string,
+  @Body() damageDto: CreateVehicleDamageDto,
+  @Req() req: any,
+) {
+  console.log('➕ إضافة ضرر جديد للطلبية:', id);
+
+  try {
+    const newDamage = await this.ordersService.addSingleDamage(
+      id,
+      damageDto,
+      req.user.id,
+      req.user.role,
+    );
+
+    return {
+      success: true,
+      message: 'تم إضافة الضرر بنجاح',
+      data: newDamage,
+    };
+  } catch (error) {
+    console.error('❌ خطأ في إضافة الضرر:', error);
+    throw error;
+  }
+}
+
+// 6. تحديث ضرر معين
+@Patch(':id/damages/:damageId')
+@UseGuards(JwtAuthGuard)
+async updateSingleDamage(
+  @Param('id') id: string,
+  @Param('damageId') damageId: string,
+  @Body() damageDto: Partial<CreateVehicleDamageDto>,
+  @Req() req: any,
+) {
+  console.log('📝 تحديث ضرر معين:', damageId);
+
+  try {
+    const updatedDamage = await this.ordersService.updateSingleDamage(
+      id,
+      damageId,
+      damageDto,
+      req.user.id,
+      req.user.role,
+    );
+
+    return {
+      success: true,
+      message: 'تم تحديث الضرر بنجاح',
+      data: updatedDamage,
+    };
+  } catch (error) {
+    console.error('❌ خطأ في تحديث الضرر:', error);
+    throw error;
+  }
+}
+
+// 7. حذف جميع أضرار الطلبية
+@Delete(':id/damages')
+@UseGuards(JwtAuthGuard)
+async clearAllOrderDamages(
+  @Param('id') id: string,
+  @Req() req: any,
+) {
+  console.log('🗑️ حذف جميع أضرار الطلبية:', id);
+
+  try {
+    const result = await this.ordersService.clearAllOrderDamages(
+      id,
+      req.user.id,
+      req.user.role,
+    );
+
+    return {
+      success: true,
+      message: 'تم حذف جميع الأضرار بنجاح',
+      data: result,
+    };
+  } catch (error) {
+    console.error('❌ خطأ في حذف جميع الأضرار:', error);
+    throw error;
+  }
+}
+
+// 8. الحصول على الأضرار حسب الجانب
+@Get(':id/damages/side/:side')
+@UseGuards(JwtAuthGuard)
+async getDamagesBySide(
+  @Param('id') id: string,
+  @Param('side') side: string,
+  @Req() req: any,
+) {
+  console.log('📋 جلب أضرار الجانب:', side, 'للطلبية:', id);
+
+  try {
+    // التحقق من صحة الجانب
+    const validSides = Object.values(VehicleSide);
+    if (!validSides.includes(side as VehicleSide)) {
+      throw new BadRequestException(`جانب غير صحيح: ${side}`);
+    }
+
+    const damages = await this.ordersService.getDamagesBySide(
+      id,
+      side as VehicleSide,
+      req.user.id,
+      req.user.role,
+    );
+
+    return {
+      success: true,
+      data: damages,
+    };
+  } catch (error) {
+    console.error('❌ خطأ في جلب أضرار الجانب:', error);
+    throw error;
+  }
+}
+
+// 9. الحصول على الأضرار حسب النوع
+@Get(':id/damages/type/:type')
+@UseGuards(JwtAuthGuard)
+async getDamagesByType(
+  @Param('id') id: string,
+  @Param('type') type: string,
+  @Req() req: any,
+) {
+  console.log('📋 جلب أضرار النوع:', type, 'للطلبية:', id);
+
+  try {
+    // التحقق من صحة نوع الضرر
+    const validTypes = Object.values(DamageType);
+    if (!validTypes.includes(type as DamageType)) {
+      throw new BadRequestException(`نوع ضرر غير صحيح: ${type}`);
+    }
+
+    const damages = await this.ordersService.getDamagesByType(
+      id,
+      type as DamageType,
+      req.user.id,
+      req.user.role,
+    );
+
+    return {
+      success: true,
+      data: damages,
+    };
+  } catch (error) {
+    console.error('❌ خطأ في جلب أضرار النوع:', error);
+    throw error;
+  }
+}
+
+// 10. تصدير تقرير الأضرار
+@Get(':id/damages/report')
+@UseGuards(JwtAuthGuard)
+async generateDamageReport(
+  @Param('id') id: string,
+  @Req() req: any,
+) {
+  console.log('📊 إنشاء تقرير الأضرار للطلبية:', id);
+
+  try {
+    const report = await this.ordersService.generateDamageReport(
+      id,
+      req.user.id,
+      req.user.role,
+    );
+
+    return {
+      success: true,
+      data: report,
+    };
+  } catch (error) {
+    console.error('❌ خطأ في إنشاء تقرير الأضرار:', error);
+    throw error;
+  }
 }
 
 }

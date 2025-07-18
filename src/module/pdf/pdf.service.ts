@@ -105,34 +105,1852 @@ export class PdfService {
     });
   }
 
-  async generateOrderHtml(orderId: string): Promise<string> {
-    console.log(`📄 HTML-Generierung für Auftrag ${orderId} gestartet`);
 
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
-      include: {
-        pickupAddress: true,
-        deliveryAddress: true,
-        driver: true,
-        images: true,
-        signatures: true,
-        expenses: true,
+async generateOrderHtml(orderId: string): Promise<string> {
+  console.log(`📄 HTML-Generierung für Auftrag ${orderId} gestartet`);
+
+  const order = await this.prisma.order.findUnique({
+    where: { id: orderId },
+    include: {
+      clientAddress: true,
+      billingAddress: true,
+      pickupAddress: true,
+      deliveryAddress: true,
+      vehicleData: true,
+      service: true,
+      driver: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+        }
       },
+      images: {
+        orderBy: { createdAt: 'desc' }
+      },
+      driverSignature: true,
+      customerSignature: true,
+      expenses: true,
+      damages: {
+        orderBy: { createdAt: 'asc' }
+      },
+    },
+  });
+
+  if (!order) {
+    throw new NotFoundException(`Auftrag ${orderId} nicht gefunden`);
+  }
+
+  try {
+    const htmlContent = await this.generateCompleteHtmlContent(order);
+    console.log(`✅ HTML تم إنشاؤه بنجاح للطلبية ${orderId}`);
+    return htmlContent;
+  } catch (error) {
+    console.error('❌ خطأ في إنشاء HTML:', error);
+    throw new InternalServerErrorException('فشل في إنشاء ملف HTML');
+  }
+}
+
+// دوال مساعدة مفقودة - أضف هذه الدوال في كلاس PdfService
+
+private getDamageTypeText(type: string): string {
+  const typeTexts = {
+    'DENT_BUMP': 'Delle/Beule',
+    'STONE_CHIP': 'Steinschlag',
+    'SCRATCH_GRAZE': 'Kratzer/Schramme',
+    'PAINT_DAMAGE': 'Lackschaden',
+    'CRACK_BREAK': 'Riss/Bruch',
+    'MISSING': 'Fehlend'
+  };
+  return typeTexts[type] || type;
+}
+
+private getVehicleSideText(side: string): string {
+  const sideTexts = {
+    'FRONT': 'Vorderseite',
+    'REAR': 'Rückseite', 
+    'LEFT': 'Linke Seite',
+    'RIGHT': 'Rechte Seite',
+    'TOP': 'Dach/Oberseite'
+  };
+  return sideTexts[side] || side;
+}
+
+private groupDamagesBySide(damages: any[]): { [key: string]: any[] } {
+  return damages.reduce((acc, damage) => {
+    const side = damage.side;
+    if (!acc[side]) {
+      acc[side] = [];
+    }
+    acc[side].push(damage);
+    return acc;
+  }, {});
+}
+
+private groupDamagesByType(damages: any[]): { [key: string]: any[] } {
+  return damages.reduce((acc, damage) => {
+    const type = damage.type;
+    if (!acc[type]) {
+      acc[type] = [];
+    }
+    acc[type].push(damage);
+    return acc;
+  }, {});
+}
+
+private getDamageTypeIcon(type: string): string {
+  const icons = {
+    'DENT_BUMP': '🔨',
+    'STONE_CHIP': '🪨', 
+    'SCRATCH_GRAZE': '✏️',
+    'PAINT_DAMAGE': '🎨',
+    'CRACK_BREAK': '💥',
+    'MISSING': '❌'
+  };
+  return icons[type] || '⚠️';
+}
+
+private getVehicleSideIcon(side: string): string {
+  const icons = {
+    'FRONT': '🔼',
+    'REAR': '🔽',
+    'LEFT': '◀️', 
+    'RIGHT': '▶️',
+    'TOP': '🔺'
+  };
+  return icons[side] || '📍';
+}
+
+private getDamageSeverityLevel(damages: any[]): string {
+  if (damages.length === 0) return 'NONE';
+  if (damages.length <= 2) return 'LOW';
+  if (damages.length <= 5) return 'MEDIUM';
+  if (damages.length <= 8) return 'HIGH';
+  return 'SEVERE';
+}
+
+private getDamageSeverityText(level: string): string {
+  const severityTexts = {
+    'NONE': 'Keine Schäden',
+    'LOW': 'Geringe Schäden',
+    'MEDIUM': 'Mittlere Schäden', 
+    'HIGH': 'Hohe Schäden',
+    'SEVERE': 'Schwere Schäden'
+  };
+  return severityTexts[level] || level;
+}
+
+private getMostDamagedSide(damages: any[]): string | null {
+  if (damages.length === 0) return null;
+  
+  const sideCount = this.groupDamagesBySide(damages);
+  const entries = Object.entries(sideCount);
+  
+  if (entries.length === 0) return null;
+  
+  const mostDamaged = entries.reduce((a, b) => 
+    sideCount[a[0]].length > sideCount[b[0]].length ? a : b
+  );
+  
+  return mostDamaged[0];
+}
+
+private getMostCommonDamageType(damages: any[]): string | null {
+  if (damages.length === 0) return null;
+  
+  const typeCount = this.groupDamagesByType(damages);
+  const entries = Object.entries(typeCount);
+  
+  if (entries.length === 0) return null;
+  
+  const mostCommon = entries.reduce((a, b) => 
+    typeCount[a[0]].length > typeCount[b[0]].length ? a : b
+  );
+  
+  return mostCommon[0];
+}
+
+private getUniqueDamageSides(damages: any[]): string[] {
+  return [...new Set(damages.map(d => d.side))];
+}
+
+private getUniqueDamageTypes(damages: any[]): string[] {
+  return [...new Set(damages.map(d => d.type))];
+}
+
+private calculateDamageStatistics(damages: any[]) {
+  return {
+    totalDamages: damages.length,
+    damagesBySide: this.groupDamagesBySide(damages),
+    damagesByType: this.groupDamagesByType(damages),
+    mostDamagedSide: this.getMostDamagedSide(damages),
+    mostCommonDamageType: this.getMostCommonDamageType(damages),
+    hasDamages: damages.length > 0,
+    sides: this.getUniqueDamageSides(damages),
+    types: this.getUniqueDamageTypes(damages),
+    damagesWithDescription: damages.filter(d => d.description && d.description.trim()).length,
+    severityLevel: this.getDamageSeverityLevel(damages),
+    severityText: this.getDamageSeverityText(this.getDamageSeverityLevel(damages))
+  };
+}
+
+private formatDamageDescription(description: string | null): string {
+  if (!description || !description.trim()) {
+    return 'Keine detaillierte Beschreibung verfügbar';
+  }
+  
+  // تنظيف وتنسيق الوصف
+  return description.trim()
+    .replace(/\n/g, '<br>')
+    .replace(/\s+/g, ' ');
+}
+
+private getDamageCreatedDate(damage: any): string {
+  if (!damage.createdAt) {
+    return 'Datum unbekannt';
+  }
+  
+  return this.formatGermanDate(new Date(damage.createdAt));
+}
+
+// دالة إضافية لإنشاء ملخص الأضرار
+private generateDamageSummaryHtml(damages: any[]): string {
+  if (!damages || damages.length === 0) {
+    return `
+      <div class="damage-summary success">
+        <h4>✅ Fahrzeugzustand: Ausgezeichnet</h4>
+        <p>Keine Schäden oder Mängel dokumentiert.</p>
+      </div>
+    `;
+  }
+
+  const stats = this.calculateDamageStatistics(damages);
+  
+  return `
+    <div class="damage-summary warning">
+      <h4>⚠️ Schadenszusammenfassung</h4>
+      <div class="damage-stats">
+        <div class="stat-row">
+          <span class="stat-label">Gesamtschäden:</span>
+          <span class="stat-value">${stats.totalDamages}</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Betroffene Bereiche:</span>
+          <span class="stat-value">${stats.sides.length}</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Schadensschwere:</span>
+          <span class="stat-value severity-${stats.severityLevel.toLowerCase()}">${stats.severityText}</span>
+        </div>
+        ${stats.mostDamagedSide ? `
+        <div class="stat-row">
+          <span class="stat-label">Meist betroffener Bereich:</span>
+          <span class="stat-value">${this.getVehicleSideText(stats.mostDamagedSide)}</span>
+        </div>
+        ` : ''}
+        ${stats.mostCommonDamageType ? `
+        <div class="stat-row">
+          <span class="stat-label">Häufigster Schadentyp:</span>
+          <span class="stat-value">${this.getDamageTypeText(stats.mostCommonDamageType)}</span>
+        </div>
+        ` : ''}
+      </div>
+    </div>
+  `;
+}
+
+// دالة إضافية لتنسيق عنوان مفصل
+private formatDetailedGermanAddress(address: any): string {
+  if (!address) {
+    return `
+      <div class="no-data">
+        <span class="no-data-icon">❌</span>
+        <p>Adresse nicht verfügbar</p>
+      </div>
+    `;
+  }
+
+  let html = `
+    <div class="address-main">
+      <div class="address-line">
+        <span class="address-icon">🏠</span>
+        <span class="address-text">${address.street || 'Straße unbekannt'} ${address.houseNumber || ''}</span>
+      </div>
+      <div class="address-line">
+        <span class="address-icon">📮</span>
+        <span class="address-text">${address.zipCode || ''} ${address.city || 'Stadt unbekannt'}</span>
+      </div>
+      <div class="address-line">
+        <span class="address-icon">🌍</span>
+        <span class="address-text">${address.country || 'Deutschland'}</span>
+      </div>
+    </div>
+  `;
+
+  // إضافة معلومات إضافية إذا توفرت
+  const additionalInfo = [];
+  
+  if (address.date) {
+    additionalInfo.push({
+      icon: '📅',
+      label: 'Termin',
+      value: this.formatGermanDateTime(new Date(address.date))
+    });
+  }
+  
+  if (address.companyName) {
+    additionalInfo.push({
+      icon: '🏢',
+      label: 'Unternehmen',
+      value: address.companyName
+    });
+  }
+
+  if (address.contactPersonName) {
+    additionalInfo.push({
+      icon: '👤',
+      label: 'Ansprechpartner',
+      value: address.contactPersonName
+    });
+  }
+
+  if (address.contactPersonPhone) {
+    additionalInfo.push({
+      icon: '📞',
+      label: 'Telefon',
+      value: address.contactPersonPhone
+    });
+  }
+
+  if (address.contactPersonEmail) {
+    additionalInfo.push({
+      icon: '📧', 
+      label: 'E-Mail',
+      value: address.contactPersonEmail
+    });
+  }
+
+  if (address.fuelLevel !== null && address.fuelLevel !== undefined) {
+    const percentage = ((address.fuelLevel / 8) * 100).toFixed(1);
+    additionalInfo.push({
+      icon: '⛽',
+      label: 'Tankstand',
+      value: `${address.fuelLevel}/8 (${percentage}%)`
+    });
+  }
+
+  if (address.fuelMeter !== null && address.fuelMeter !== undefined) {
+    additionalInfo.push({
+      icon: '🔢',
+      label: 'Kilometerstand', 
+      value: `${address.fuelMeter.toLocaleString('de-DE')} km`
+    });
+  }
+
+  if (additionalInfo.length > 0) {
+    html += `
+      <div class="address-additional">
+        <h5>Zusätzliche Informationen:</h5>
+        <div class="additional-grid">
+    `;
+    
+    additionalInfo.forEach(info => {
+      html += `
+        <div class="additional-item">
+          <span class="additional-icon">${info.icon}</span>
+          <div class="additional-content">
+            <span class="additional-label">${info.label}:</span>
+            <span class="additional-value">${info.value}</span>
+          </div>
+        </div>
+      `;
+    });
+    
+    html += `
+        </div>
+      </div>
+    `;
+  }
+
+  return html;
+}
+
+private async generateCompleteHtmlContent(order: any): Promise<string> {
+  // تحضير البيانات
+  const currentDate = this.formatGermanDateTime(new Date());
+  const logoBase64 = await this.getLogoAsBase64();
+  const imagesHtml = await this.generateImagesHtml(order.images);
+  const signaturesHtml = await this.generateSignaturesHtml([order.driverSignature, order.customerSignature].filter(Boolean));
+  const damagesHtml = this.generateDamagesHtml(order.damages || []);
+  const vehicleItemsHtml = this.generateVehicleItemsHtml(order.items || []);
+
+  return `
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fahrzeugübergabebericht - ${order.orderNumber}</title>
+    <style>
+        ${this.getEnhancedHtmlStyles()}
+    </style>
+</head>
+<body>
+    <!-- Print Controls -->
+    <div class="print-controls no-print">
+        <button onclick="window.print()" class="print-btn">🖨️ Dokument drucken</button>
+        <button onclick="window.close()" class="close-btn">❌ Schließen</button>
+    </div>
+
+    <!-- COVER PAGE -->
+    <div class="cover-page">
+        <div class="header-section">
+            <div class="logo-container">
+                ${logoBase64 ? `<img src="data:image/png;base64,${logoBase64}" alt="Logo" class="logo">` : '<div class="logo-placeholder">🏢<br>LOGO</div>'}
+            </div>
+            <div class="header-content">
+                <h1 class="main-title">FAHRZEUGÜBERGABE</h1>
+                <h2 class="sub-title">VOLLSTÄNDIGER BERICHT</h2>
+                <p class="header-description">Umfassende Dokumentation der Fahrzeugübergabe mit allen Details</p>
+            </div>
+        </div>
+        
+        <div class="order-info-card">
+            <h3>📋 Auftragsinformationen</h3>
+            <div class="info-grid">
+                <div class="info-item">
+                    <span class="info-label">Auftragsnummer:</span>
+                    <span class="info-value highlight">${order.orderNumber}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Erstellungsdatum:</span>
+                    <span class="info-value">${this.formatGermanDate(new Date(order.createdAt))}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Status:</span>
+                    <span class="info-value status-${order.status}">${this.translateStatus(order.status)}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Kunde:</span>
+                    <span class="info-value">${order.client}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Servicetyp:</span>
+                    <span class="info-value">${this.translateServiceType(order.service?.serviceType)}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Fahrzeugtyp:</span>
+                    <span class="info-value">${order.service?.vehicleType || 'Nicht angegeben'}</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="statistics-card">
+            <h3>📊 Dokumentationsübersicht</h3>
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <span class="stat-icon">📷</span>
+                    <span class="stat-number">${(order.images || []).length}</span>
+                    <span class="stat-label">Bilder</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-icon">✍️</span>
+                    <span class="stat-number">${[order.driverSignature, order.customerSignature].filter(Boolean).length}/2</span>
+                    <span class="stat-label">Unterschriften</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-icon">⚠️</span>
+                    <span class="stat-number">${(order.damages || []).length}</span>
+                    <span class="stat-label">Schäden</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-icon">💰</span>
+                    <span class="stat-number">${order.expenses ? '✓' : '❌'}</span>
+                    <span class="stat-label">Kosten</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="cover-footer">
+            <p>Erstellt am: ${currentDate}</p>
+            <p>Fahrzeugübergabe-Managementsystem</p>
+        </div>
+    </div>
+
+    <!-- TABLE OF CONTENTS -->
+    <div class="page-break">
+        <div class="section-header">
+            <h1>📑 INHALTSVERZEICHNIS</h1>
+        </div>
+        
+        <div class="toc-container">
+            <div class="toc-item">
+                <span class="toc-title">1. Kundeninformationen</span>
+                <span class="toc-dots"></span>
+                <span class="toc-page">Seite 3</span>
+            </div>
+            <div class="toc-item">
+                <span class="toc-title">2. Fahrzeugdaten</span>
+                <span class="toc-dots"></span>
+                <span class="toc-page">Seite 4</span>
+            </div>
+            <div class="toc-item">
+                <span class="toc-title">3. Serviceinformationen</span>
+                <span class="toc-dots"></span>
+                <span class="toc-page">Seite 5</span>
+            </div>
+            <div class="toc-item">
+                <span class="toc-title">4. Standortinformationen</span>
+                <span class="toc-dots"></span>
+                <span class="toc-page">Seite 6</span>
+            </div>
+            <div class="toc-item">
+                <span class="toc-title">5. Fahrzeugausstattung</span>
+                <span class="toc-dots"></span>
+                <span class="toc-page">Seite 7</span>
+            </div>
+            <div class="toc-item">
+                <span class="toc-title">6. Schadensdokumentation</span>
+                <span class="toc-dots"></span>
+                <span class="toc-page">Seite 8</span>
+            </div>
+            <div class="toc-item">
+                <span class="toc-title">7. Bilddokumentation</span>
+                <span class="toc-dots"></span>
+                <span class="toc-page">Seite 9</span>
+            </div>
+            <div class="toc-item">
+                <span class="toc-title">8. Unterschriftennachweis</span>
+                <span class="toc-dots"></span>
+                <span class="toc-page">Seite 10</span>
+            </div>
+            <div class="toc-item">
+                <span class="toc-title">9. Kostenaufstellung</span>
+                <span class="toc-dots"></span>
+                <span class="toc-page">Seite 11</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 1. CUSTOMER INFORMATION -->
+    <div class="page-break">
+        <div class="section-header">
+            <h1>👤 1. KUNDENINFORMATIONEN</h1>
+        </div>
+        
+        <!-- Client Information -->
+        <div class="content-card">
+            <h3>📋 Hauptkunde</h3>
+            <div class="customer-grid">
+                <div class="customer-item primary">
+                    <span class="customer-icon">👤</span>
+                    <div class="customer-content">
+                        <span class="customer-label">Name</span>
+                        <span class="customer-value">${order.client || 'Nicht angegeben'}</span>
+                    </div>
+                </div>
+                <div class="customer-item">
+                    <span class="customer-icon">📞</span>
+                    <div class="customer-content">
+                        <span class="customer-label">Telefonnummer</span>
+                        <span class="customer-value">${order.clientPhone || 'Nicht verfügbar'}</span>
+                    </div>
+                </div>
+                <div class="customer-item">
+                    <span class="customer-icon">📧</span>
+                    <div class="customer-content">
+                        <span class="customer-label">E-Mail</span>
+                        <span class="customer-value">${order.clientEmail || 'Nicht verfügbar'}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Client Address -->
+        ${order.clientAddress ? `
+        <div class="content-card">
+            <h3>🏠 Kundenadresse</h3>
+            <div class="address-content">
+                ${this.formatGermanAddress(order.clientAddress)}
+            </div>
+        </div>` : ''}
+
+        <!-- Billing Information -->
+        <div class="content-card">
+            <h3>💳 Rechnungsinformationen</h3>
+            <div class="billing-info">
+                <div class="billing-same">
+                    <span class="billing-icon">${order.isSameBilling ? '✅' : '❌'}</span>
+                    <span class="billing-text">
+                        ${order.isSameBilling ? 'Rechnungsadresse identisch mit Kundenadresse' : 'Separate Rechnungsadresse'}
+                    </span>
+                </div>
+                
+                ${!order.isSameBilling ? `
+                <div class="billing-details">
+                    <div class="billing-grid">
+                        <div class="billing-item">
+                            <span class="billing-label">Rechnungsname:</span>
+                            <span class="billing-value">${order.billingName || 'Nicht angegeben'}</span>
+                        </div>
+                        <div class="billing-item">
+                            <span class="billing-label">Telefonnummer:</span>
+                            <span class="billing-value">${order.billingPhone || 'Nicht verfügbar'}</span>
+                        </div>
+                        <div class="billing-item">
+                            <span class="billing-label">E-Mail:</span>
+                            <span class="billing-value">${order.billingEmail || 'Nicht verfügbar'}</span>
+                        </div>
+                    </div>
+                    ${order.billingAddress ? `
+                    <div class="billing-address">
+                        <h4>📍 Rechnungsadresse</h4>
+                        ${this.formatGermanAddress(order.billingAddress)}
+                    </div>` : ''}
+                </div>` : ''}
+            </div>
+        </div>
+
+        <!-- Driver Information -->
+        ${order.driver ? `
+        <div class="content-card">
+            <h3>🚗 Fahrerinformationen</h3>
+            <div class="driver-grid">
+                <div class="driver-item">
+                    <span class="driver-icon">👨‍💼</span>
+                    <div class="driver-content">
+                        <span class="driver-label">Fahrername</span>
+                        <span class="driver-value">${order.driver.name || 'Nicht angegeben'}</span>
+                    </div>
+                </div>
+                <div class="driver-item">
+                    <span class="driver-icon">📧</span>
+                    <div class="driver-content">
+                        <span class="driver-label">E-Mail</span>
+                        <span class="driver-value">${order.driver.email || 'Nicht verfügbar'}</span>
+                    </div>
+                </div>
+                ${order.driver.phone ? `
+                <div class="driver-item">
+                    <span class="driver-icon">📞</span>
+                    <div class="driver-content">
+                        <span class="driver-label">Telefonnummer</span>
+                        <span class="driver-value">${order.driver.phone}</span>
+                    </div>
+                </div>` : ''}
+            </div>
+        </div>` : ''}
+    </div>
+
+    <!-- 2. VEHICLE INFORMATION -->
+    <div class="page-break">
+        <div class="section-header">
+            <h1>🚗 2. FAHRZEUGDATEN</h1>
+        </div>
+        
+        <!-- Basic Vehicle Data -->
+        <div class="content-card">
+            <h3>🔍 Grunddaten</h3>
+            <div class="vehicle-grid">
+                <div class="vehicle-item primary">
+                    <span class="vehicle-icon">🚗</span>
+                    <div class="vehicle-content">
+                        <span class="vehicle-label">Kennzeichen</span>
+                        <span class="vehicle-value highlight">${order.vehicleData?.licensePlateNumber || 'Nicht angegeben'}</span>
+                    </div>
+                </div>
+                <div class="vehicle-item primary">
+                    <span class="vehicle-icon">👤</span>
+                    <div class="vehicle-content">
+                        <span class="vehicle-label">Fahrzeughalter</span>
+                        <span class="vehicle-value">${order.vehicleData?.vehicleOwner || 'Nicht angegeben'}</span>
+                    </div>
+                </div>
+                <div class="vehicle-item">
+                    <span class="vehicle-icon">🔢</span>
+                    <div class="vehicle-content">
+                        <span class="vehicle-label">VIN</span>
+                        <span class="vehicle-value">${order.vehicleData?.vin || 'Nicht angegeben'}</span>
+                    </div>
+                </div>
+                <div class="vehicle-item">
+                    <span class="vehicle-icon">🆔</span>
+                    <div class="vehicle-content">
+                        <span class="vehicle-label">FIN</span>
+                        <span class="vehicle-value">${order.vehicleData?.fin || 'Nicht angegeben'}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Technical Specifications -->
+        <div class="content-card">
+            <h3>🔧 Technische Daten</h3>
+            <div class="vehicle-grid">
+                <div class="vehicle-item">
+                    <span class="vehicle-icon">🏭</span>
+                    <div class="vehicle-content">
+                        <span class="vehicle-label">Marke</span>
+                        <span class="vehicle-value">${order.vehicleData?.brand || 'Nicht angegeben'}</span>
+                    </div>
+                </div>
+                <div class="vehicle-item">
+                    <span class="vehicle-icon">🚙</span>
+                    <div class="vehicle-content">
+                        <span class="vehicle-label">Modell</span>
+                        <span class="vehicle-value">${order.vehicleData?.model || 'Nicht angegeben'}</span>
+                    </div>
+                </div>
+                <div class="vehicle-item">
+                    <span class="vehicle-icon">📅</span>
+                    <div class="vehicle-content">
+                        <span class="vehicle-label">Baujahr</span>
+                        <span class="vehicle-value">${order.vehicleData?.year || 'Nicht angegeben'}</span>
+                    </div>
+                </div>
+                <div class="vehicle-item">
+                    <span class="vehicle-icon">🎨</span>
+                    <div class="vehicle-content">
+                        <span class="vehicle-label">Farbe</span>
+                        <span class="vehicle-value">${order.vehicleData?.color || 'Nicht angegeben'}</span>
+                    </div>
+                </div>
+                <div class="vehicle-item">
+                    <span class="vehicle-icon">🔤</span>
+                    <div class="vehicle-content">
+                        <span class="vehicle-label">Typ</span>
+                        <span class="vehicle-value">${order.vehicleData?.typ || 'Nicht angegeben'}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Administrative Data -->
+        <div class="content-card">
+            <h3>📋 Verwaltungsdaten</h3>
+            <div class="vehicle-grid">
+                <div class="vehicle-item">
+                    <span class="vehicle-icon">🏢</span>
+                    <div class="vehicle-content">
+                        <span class="vehicle-label">ÜKZ</span>
+                        <span class="vehicle-value">${order.vehicleData?.ukz || 'Nicht angegeben'}</span>
+                    </div>
+                </div>
+                <div class="vehicle-item">
+                    <span class="vehicle-icon">📄</span>
+                    <div class="vehicle-content">
+                        <span class="vehicle-label">Bestellnummer</span>
+                        <span class="vehicle-value">${order.vehicleData?.bestellnummer || 'Nicht angegeben'}</span>
+                    </div>
+                </div>
+                <div class="vehicle-item">
+                    <span class="vehicle-icon">📑</span>
+                    <div class="vehicle-content">
+                        <span class="vehicle-label">Leasingvertragsnummer</span>
+                        <span class="vehicle-value">${order.vehicleData?.leasingvertragsnummer || 'Nicht angegeben'}</span>
+                    </div>
+                </div>
+                <div class="vehicle-item">
+                    <span class="vehicle-icon">💼</span>
+                    <div class="vehicle-content">
+                        <span class="vehicle-label">Kostenstelle</span>
+                        <span class="vehicle-value">${order.vehicleData?.kostenstelle || 'Nicht angegeben'}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Vehicle Notes -->
+        ${order.vehicleData?.bemerkung ? `
+        <div class="content-card">
+            <h3>💬 Fahrzeugbemerkungen</h3>
+            <div class="description-content">
+                <p>${order.vehicleData.bemerkung}</p>
+            </div>
+        </div>` : ''}
+    </div>
+
+    <!-- 3. SERVICE INFORMATION -->
+    <div class="page-break">
+        <div class="section-header">
+            <h1>🔧 3. SERVICEINFORMATIONEN</h1>
+        </div>
+        
+        <div class="content-card">
+            <h3>🛠️ Service Details</h3>
+            <div class="service-grid">
+                <div class="service-item primary">
+                    <span class="service-icon">🚛</span>
+                    <div class="service-content">
+                        <span class="service-label">Fahrzeugtyp</span>
+                        <span class="service-value">${order.service?.vehicleType || 'Nicht angegeben'}</span>
+                    </div>
+                </div>
+                <div class="service-item primary">
+                    <span class="service-icon">⚙️</span>
+                    <div class="service-content">
+                        <span class="service-label">Servicetyp</span>
+                        <span class="service-value">${this.translateServiceType(order.service?.serviceType)}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        ${order.service?.description ? `
+        <div class="content-card">
+            <h3>📝 Servicebeschreibung</h3>
+            <div class="description-content">
+                <p>${order.service.description}</p>
+            </div>
+        </div>` : ''}
+
+        ${order.description ? `
+        <div class="content-card">
+            <h3>📋 Auftragsbeschreibung</h3>
+            <div class="description-content">
+                <p>${order.description}</p>
+            </div>
+        </div>` : ''}
+
+        ${order.comments ? `
+        <div class="content-card">
+            <h3>💭 Zusätzliche Kommentare</h3>
+            <div class="description-content">
+                <p>${order.comments}</p>
+            </div>
+        </div>` : ''}
+    </div>
+
+    <!-- 4. LOCATION INFORMATION -->
+    <div class="page-break">
+        <div class="section-header">
+            <h1>📍 4. STANDORTINFORMATIONEN</h1>
+        </div>
+        
+        <div class="locations-container">
+            <!-- Pickup Address -->
+            <div class="location-card pickup">
+                <div class="location-header">
+                    <span class="location-icon">📍</span>
+                    <h3>Abholadresse</h3>
+                </div>
+                <div class="location-content">
+                    ${this.formatDetailedAddress(order.pickupAddress, 'pickup')}
+                </div>
+            </div>
+
+            <!-- Delivery Address -->
+            <div class="location-card delivery">
+                <div class="location-header">
+                    <span class="location-icon">🎯</span>
+                    <h3>Lieferadresse</h3>
+                </div>
+                <div class="location-content">
+                    ${this.formatDetailedAddress(order.deliveryAddress, 'delivery')}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 5. VEHICLE EQUIPMENT -->
+    <div class="page-break">
+        <div class="section-header">
+            <h1>🎒 5. FAHRZEUGAUSSTATTUNG</h1>
+        </div>
+        ${vehicleItemsHtml}
+    </div>
+
+    <!-- 6. DAMAGE DOCUMENTATION -->
+    <div class="page-break">
+        <div class="section-header">
+            <h1>⚠️ 6. SCHADENSDOKUMENTATION</h1>
+        </div>
+        ${damagesHtml}
+    </div>
+
+    <!-- 7. IMAGE DOCUMENTATION -->
+    <div class="page-break">
+        <div class="section-header">
+            <h1>📷 7. BILDDOKUMENTATION</h1>
+        </div>
+        ${imagesHtml}
+    </div>
+
+    <!-- 8. SIGNATURES -->
+    <div class="page-break">
+        <div class="section-header">
+            <h1>✍️ 8. UNTERSCHRIFTENNACHWEIS</h1>
+        </div>
+        
+        <div class="legal-notice">
+            <div class="notice-icon">ℹ️</div>
+            <div class="notice-content">
+                <p><strong>Rechtlicher Hinweis:</strong> Die nachfolgenden digitalen Unterschriften entsprechen den Anforderungen des deutschen Signaturgesetzes (SigG) für einfache elektronische Signaturen.</p>
+            </div>
+        </div>
+        
+        ${signaturesHtml}
+    </div>
+
+    <!-- 9. EXPENSES -->
+    <div class="page-break">
+        <div class="section-header">
+            <h1>💰 9. KOSTENAUFSTELLUNG</h1>
+        </div>
+        ${this.generateExpensesHtml(order.expenses)}
+    </div>
+
+    <!-- FOOTER PAGE -->
+    <div class="page-break">
+        <div class="footer-page">
+            <div class="footer-content">
+                <h2>📋 DOKUMENTATIONSABSCHLUSS</h2>
+                <p>Dieser Bericht wurde automatisch generiert und enthält alle verfügbaren Informationen zum Zeitpunkt der Erstellung.</p>
+                
+                <div class="document-info">
+                    <div class="info-row">
+                        <span class="info-label">Dokument erstellt:</span>
+                        <span class="info-value">${currentDate}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Auftragsnummer:</span>
+                        <span class="info-value">${order.orderNumber}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Status:</span>
+                        <span class="info-value">${this.translateStatus(order.status)}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Gesamtseiten:</span>
+                        <span class="info-value">11 Seiten</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>`;
+}
+
+// دوال مساعدة جديدة
+
+private formatDetailedAddress(address: any, type: 'pickup' | 'delivery'): string {
+  if (!address) {
+    return `
+      <div class="no-data">
+        <span class="no-data-icon">❌</span>
+        <p>Adresse nicht verfügbar</p>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="address-basic">
+      <p class="address-line">${address.street || ''} ${address.houseNumber || ''}`.trim() + `</p>
+      <p class="address-line">${address.zipCode || ''} ${address.city || ''}</p>
+      <p class="address-line">${address.country || 'Deutschland'}</p>
+    </div>
+
+    ${address.date ? `
+    <div class="address-timing">
+      <span class="timing-icon">📅</span>
+      <div class="timing-content">
+        <span class="timing-label">${type === 'pickup' ? 'Abholtermin' : 'Liefertermin'}:</span>
+        <span class="timing-value">${this.formatGermanDateTime(new Date(address.date))}</span>
+      </div>
+    </div>` : ''}
+
+    ${address.companyName ? `
+    <div class="address-company">
+      <span class="company-icon">🏢</span>
+      <div class="company-content">
+        <span class="company-label">Unternehmen:</span>
+        <span class="company-value">${address.companyName}</span>
+      </div>
+    </div>` : ''}
+
+    ${address.contactPersonName || address.contactPersonPhone || address.contactPersonEmail ? `
+    <div class="contact-info">
+      <h4 class="contact-header">👤 Ansprechpartner</h4>
+      ${address.contactPersonName ? `
+      <div class="contact-item">
+        <span class="contact-icon">👨‍💼</span>
+        <span class="contact-label">Name:</span>
+        <span class="contact-value">${address.contactPersonName}</span>
+      </div>` : ''}
+      ${address.contactPersonPhone ? `
+      <div class="contact-item">
+        <span class="contact-icon">📞</span>
+        <span class="contact-label">Telefon:</span>
+        <span class="contact-value">${address.contactPersonPhone}</span>
+      </div>` : ''}
+      ${address.contactPersonEmail ? `
+      <div class="contact-item">
+        <span class="contact-icon">📧</span>
+        <span class="contact-label">E-Mail:</span>
+        <span class="contact-value">${address.contactPersonEmail}</span>
+      </div>` : ''}
+    </div>` : ''}
+
+    ${address.fuelLevel !== null || address.fuelMeter !== null ? `
+    <div class="fuel-info">
+      <h4 class="fuel-header">⛽ Kraftstoffinformationen</h4>
+      ${address.fuelLevel !== null ? `
+      <div class="fuel-item">
+        <span class="fuel-icon">📊</span>
+        <span class="fuel-label">Tankfüllung:</span>
+        <span class="fuel-value">${address.fuelLevel}/8 (${((address.fuelLevel / 8) * 100).toFixed(1)}%)</span>
+      </div>` : ''}
+      ${address.fuelMeter !== null ? `
+      <div class="fuel-item">
+        <span class="fuel-icon">🔢</span>
+        <span class="fuel-label">Kilometerstand:</span>
+        <span class="fuel-value">${address.fuelMeter.toLocaleString('de-DE')} km</span>
+      </div>` : ''}
+    </div>` : ''}
+  `;
+}
+
+private generateVehicleItemsHtml(items: string[]): string {
+  if (!items || items.length === 0) {
+    return `
+      <div class="no-data">
+        <span class="no-data-icon">📦</span>
+        <p>Keine Fahrzeugausstattung dokumentiert</p>
+      </div>
+    `;
+  }
+
+  const categorizedItems = this.categorizeVehicleItems(items);
+  let html = '';
+
+  Object.entries(categorizedItems).forEach(([category, categoryItems]) => {
+    html += `
+      <div class="content-card">
+        <h3>${this.getItemCategoryIcon(category)} ${this.translateItemCategory(category)}</h3>
+        <div class="items-grid">
+    `;
+    
+    categoryItems.forEach(item => {
+      const itemInfo = this.getVehicleItemInfo(item);
+      html += `
+        <div class="item-card ${itemInfo.available ? 'available' : 'missing'}">
+          <span class="item-icon">${itemInfo.icon}</span>
+          <div class="item-content">
+            <span class="item-name">${itemInfo.name}</span>
+            <span class="item-status">${itemInfo.available ? 'Vorhanden' : 'Fehlend'}</span>
+          </div>
+        </div>
+      `;
     });
 
-    if (!order) {
-      throw new NotFoundException(`Auftrag ${orderId} nicht gefunden`);
+    html += `
+        </div>
+      </div>
+    `;
+  });
+
+  return html;
+}
+
+private generateDamagesHtml(damages: any[]): string {
+  if (!damages || damages.length === 0) {
+    return `
+      <div class="no-data-success">
+        <span class="no-data-icon">✅</span>
+        <p><strong>Keine Schäden dokumentiert</strong></p>
+        <p>Das Fahrzeug wurde ohne erkennbare Schäden übergeben.</p>
+      </div>
+    `;
+  }
+
+  const damagesBySide = this.groupDamagesBySide(damages);
+  let html = `
+    <div class="damages-summary">
+      <div class="summary-card">
+        <span class="summary-icon">⚠️</span>
+        <div class="summary-content">
+          <span class="summary-number">${damages.length}</span>
+          <span class="summary-label">Schäden dokumentiert</span>
+        </div>
+      </div>
+      <div class="summary-card">
+        <span class="summary-icon">📍</span>
+        <div class="summary-content">
+          <span class="summary-number">${Object.keys(damagesBySide).length}</span>
+          <span class="summary-label">Betroffene Bereiche</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Vehicle diagram with damages
+  html += `
+    <div class="content-card">
+      <h3>🚗 Schadenübersicht nach Fahrzeugbereich</h3>
+      <div class="vehicle-diagram">
+        ${this.generateVehicleDiagram(damagesBySide)}
+      </div>
+    </div>
+  `;
+
+  // Detailed damage list
+  Object.entries(damagesBySide).forEach(([side, sideDamages]) => {
+    html += `
+      <div class="content-card">
+        <h3>${this.getVehicleSideIcon(side)} ${this.getVehicleSideText(side as any)}</h3>
+        <div class="damages-list">
+    `;
+    
+    (sideDamages as any[]).forEach((damage, index) => {
+      html += `
+        <div class="damage-item">
+          <div class="damage-header">
+            <span class="damage-number">#${index + 1}</span>
+            <span class="damage-type">${this.getDamageTypeIcon(damage.type)} ${this.getDamageTypeText(damage.type)}</span>
+            <span class="damage-date">${this.formatGermanDate(new Date(damage.createdAt))}</span>
+          </div>
+          ${damage.description ? `
+          <div class="damage-description">
+            <span class="description-icon">📝</span>
+            <span class="description-text">${damage.description}</span>
+          </div>` : ''}
+        </div>
+      `;
+    });
+
+    html += `
+        </div>
+      </div>
+    `;
+  });
+
+  return html;
+}
+
+private categorizeVehicleItems(items: string[]): { [key: string]: string[] } {
+  const categories = {
+    'SAFETY': ['SAFETY_VEST', 'WARNING_TRIANGLE', 'FIRST_AID_KIT'],
+    'TIRES': ['WINTER_TIRES', 'SUMMER_TIRES', 'ALLOY_WHEELS', 'HUBCAPS', 'SECOND_SET_OF_TIRES', 'EMERGENCY_WHEEL', 'SPARE_TIRE'],
+    'TOOLS': ['TOOLS_JACK', 'COMPRESSOR_REPAIR_KIT'],
+    'INTERIOR': ['PARTITION_NET', 'REAR_PARCEL_SHELF', 'TRUNK_ROLL_COVER'],
+    'ELECTRONICS': ['NAVIGATION_SYSTEM', 'RADIO', 'ANTENNA'],
+    'DOCUMENTS': ['OPERATING_MANUAL', 'REGISTRATION_DOCUMENT', 'SERVICE_BOOK', 'FUEL_CARD'],
+    'KEYS': ['VEHICLE_KEYS']
+  };
+
+  const categorized: { [key: string]: string[] } = {};
+  
+  Object.entries(categories).forEach(([category, categoryItems]) => {
+    const foundItems = items.filter(item => categoryItems.includes(item));
+    if (foundItems.length > 0) {
+      categorized[category] = foundItems;
+    }
+  });
+
+  // Add uncategorized items
+  const categorizedItems = Object.values(categorized).flat();
+  const uncategorized = items.filter(item => !categorizedItems.includes(item));
+  if (uncategorized.length > 0) {
+    categorized['OTHER'] = uncategorized;
+  }
+
+  return categorized;
+}
+
+private getItemCategoryIcon(category: string): string {
+  const icons = {
+    'SAFETY': '🦺',
+    'TIRES': '🛞',
+    'TOOLS': '🔧',
+    'INTERIOR': '🪑',
+    'ELECTRONICS': '📱',
+    'DOCUMENTS': '📄',
+    'KEYS': '🗝️',
+    'OTHER': '📦'
+  };
+  return icons[category] || '📦';
+}
+
+private translateItemCategory(category: string): string {
+  const translations = {
+    'SAFETY': 'Sicherheitsausrüstung',
+    'TIRES': 'Reifen & Räder',
+    'TOOLS': 'Werkzeuge',
+    'INTERIOR': 'Innenausstattung',
+    'ELECTRONICS': 'Elektronik',
+    'DOCUMENTS': 'Dokumente',
+    'KEYS': 'Schlüssel',
+    'OTHER': 'Sonstiges'
+  };
+  return translations[category] || 'Sonstiges';
+}
+
+private getVehicleItemInfo(item: string): { name: string; icon: string; available: boolean } {
+  const itemsMap = {
+    'PARTITION_NET': { name: 'Trennnetz', icon: '🕸️', available: true },
+    'WINTER_TIRES': { name: 'Winterreifen', icon: '❄️', available: true },
+    'SUMMER_TIRES': { name: 'Sommerreifen', icon: '☀️', available: true },
+    'HUBCAPS': { name: 'Radkappen', icon: '⭕', available: true },
+    'ALLOY_WHEELS': { name: 'Alufelgen', icon: '🛞', available: true },
+    'REAR_PARCEL_SHELF': { name: 'Hutablage', icon: '📦', available: true },
+    'NAVIGATION_SYSTEM': { name: 'Navigationssystem', icon: '🗺️', available: true },
+    'TRUNK_ROLL_COVER': { name: 'Kofferraumrollo', icon: '🎭', available: true },
+    'SAFETY_VEST': { name: 'Warnweste', icon: '🦺', available: true },
+    'VEHICLE_KEYS': { name: 'Fahrzeugschlüssel', icon: '🗝️', available: true },
+    'WARNING_TRIANGLE': { name: 'Warndreieck', icon: '🔺', available: true },
+    'RADIO': { name: 'Radio', icon: '📻', available: true },
+    'OPERATING_MANUAL': { name: 'Bedienungsanleitung', icon: '📖', available: true },
+    'REGISTRATION_DOCUMENT': { name: 'Fahrzeugschein', icon: '📄', available: true },
+    'COMPRESSOR_REPAIR_KIT': { name: 'Kompressor-Reparaturset', icon: '🛠️', available: true },
+    'TOOLS_JACK': { name: 'Werkzeug & Wagenheber', icon: '🔧', available: true },
+    'SECOND_SET_OF_TIRES': { name: 'Zweiter Reifensatz', icon: '🛞', available: true },
+    'EMERGENCY_WHEEL': { name: 'Notrad', icon: '🆘', available: true },
+    'SPARE_TIRE': { name: 'Ersatzreifen', icon: '🛞', available: true },
+    'ANTENNA': { name: 'Antenne', icon: '📡', available: true },
+    'FUEL_CARD': { name: 'Tankkarte', icon: '💳', available: true },
+    'FIRST_AID_KIT': { name: 'Erste-Hilfe-Kasten', icon: '🩹', available: true },
+    'SERVICE_BOOK': { name: 'Serviceheft', icon: '📓', available: true }
+  };
+
+  return itemsMap[item] || { name: item, icon: '❓', available: true };
+}
+
+private generateVehicleDiagram(damagesBySide: { [key: string]: any[] }): string {
+  return `
+    <div class="vehicle-outline">
+      <div class="vehicle-part front ${damagesBySide['FRONT'] ? 'has-damage' : ''}">
+        <span class="part-label">FRONT</span>
+        ${damagesBySide['FRONT'] ? `<span class="damage-count">${damagesBySide['FRONT'].length}</span>` : ''}
+      </div>
+      <div class="vehicle-middle">
+        <div class="vehicle-part left ${damagesBySide['LEFT'] ? 'has-damage' : ''}">
+          <span class="part-label">LINKS</span>
+          ${damagesBySide['LEFT'] ? `<span class="damage-count">${damagesBySide['LEFT'].length}</span>` : ''}
+        </div>
+        <div class="vehicle-part top ${damagesBySide['TOP'] ? 'has-damage' : ''}">
+          <span class="part-label">DACH</span>
+          ${damagesBySide['TOP'] ? `<span class="damage-count">${damagesBySide['TOP'].length}</span>` : ''}
+        </div>
+        <div class="vehicle-part right ${damagesBySide['RIGHT'] ? 'has-damage' : ''}">
+          <span class="part-label">RECHTS</span>
+          ${damagesBySide['RIGHT'] ? `<span class="damage-count">${damagesBySide['RIGHT'].length}</span>` : ''}
+        </div>
+      </div>
+      <div class="vehicle-part rear ${damagesBySide['REAR'] ? 'has-damage' : ''}">
+        <span class="part-label">HECK</span>
+        ${damagesBySide['REAR'] ? `<span class="damage-count">${damagesBySide['REAR'].length}</span>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+
+private getEnhancedHtmlStyles(): string {
+  return `
+    ${this.getGermanHtmlStyles()}
+    
+    /* Enhanced Styles for New Features */
+    .highlight {
+      background: linear-gradient(120deg, #a8e6cf 0%, #dcedc1 100%);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 600;
     }
 
-    try {
-      const htmlContent = await this.generateHtmlContent(order);
-      console.log(`✅ HTML تم إنشاؤه بنجاح للطلبية ${orderId}`);
-      return htmlContent;
-    } catch (error) {
-      console.error('❌ خطأ في إنشاء HTML:', error);
-      throw new InternalServerErrorException('فشل في إنشاء ملف HTML');
+    .statistics-card {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 25px;
+      border-radius: 12px;
+      margin: 20px 0;
     }
-  }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+      margin-top: 20px;
+    }
+
+    .stat-item {
+      text-align: center;
+      background: rgba(255,255,255,0.1);
+      padding: 15px;
+      border-radius: 8px;
+    }
+
+    .stat-icon {
+      font-size: 24px;
+      display: block;
+      margin-bottom: 8px;
+    }
+
+    .stat-number {
+      font-size: 28px;
+      font-weight: bold;
+      display: block;
+      margin-bottom: 5px;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      opacity: 0.9;
+    }
+
+    /* Customer & Driver Styles */
+    .customer-grid, .driver-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 15px;
+    }
+
+    .customer-item, .driver-item {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      border-left: 4px solid #3498db;
+    }
+
+    .customer-item.primary, .driver-item.primary {
+      border-left-color: #e74c3c;
+      background: #fdf2f2;
+    }
+
+    .customer-icon, .driver-icon {
+      font-size: 24px;
+      flex-shrink: 0;
+    }
+
+    .customer-content, .driver-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .customer-label, .driver-label {
+      font-size: 12px;
+      color: #7f8c8d;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .customer-value, .driver-value {
+      font-weight: 500;
+      color: #2c3e50;
+    }
+
+    /* Billing Information */
+    .billing-info {
+      background: #f8f9fa;
+      padding: 20px;
+      border-radius: 8px;
+    }
+
+    .billing-same {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 15px;
+      background: white;
+      border-radius: 6px;
+      margin-bottom: 15px;
+    }
+
+    .billing-icon {
+      font-size: 20px;
+    }
+
+    .billing-text {
+      font-weight: 500;
+    }
+
+    .billing-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+
+    .billing-item {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .billing-label {
+      font-size: 12px;
+      color: #7f8c8d;
+      font-weight: 600;
+    }
+
+    .billing-value {
+      font-weight: 500;
+      color: #2c3e50;
+    }
+
+    /* Service Styles */
+    .service-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 15px;
+    }
+
+    .service-item {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      border-left: 4px solid #27ae60;
+    }
+
+    .service-item.primary {
+      border-left-color: #e74c3c;
+      background: #fdf2f2;
+    }
+
+    .service-icon {
+      font-size: 24px;
+      flex-shrink: 0;
+    }
+
+    .service-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .service-label {
+      font-size: 12px;
+      color: #7f8c8d;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .service-value {
+      font-weight: 500;
+      color: #2c3e50;
+    }
+
+    /* Location Styles */
+    .locations-container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 30px;
+    }
+
+    .location-card {
+      background: #ffffff;
+      border-radius: 12px;
+      padding: 25px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+      border-top: 4px solid;
+    }
+
+    .location-card.pickup {
+      border-top-color: #3498db;
+    }
+
+    .location-card.delivery {
+      border-top-color: #27ae60;
+    }
+
+    .location-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .location-icon {
+      font-size: 24px;
+    }
+
+    .address-basic {
+      margin-bottom: 15px;
+    }
+
+    .address-timing, .address-company {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      background: #f8f9fa;
+      border-radius: 6px;
+      margin-bottom: 10px;
+    }
+
+    .timing-icon, .company-icon {
+      font-size: 18px;
+    }
+
+    .timing-content, .company-content {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .timing-label, .company-label {
+      font-size: 11px;
+      color: #7f8c8d;
+      font-weight: 600;
+    }
+
+    .timing-value, .company-value {
+      font-weight: 500;
+      color: #2c3e50;
+    }
+
+    .contact-info, .fuel-info {
+      background: #e3f2fd;
+      padding: 15px;
+      border-radius: 8px;
+      margin-top: 15px;
+    }
+
+    .contact-header, .fuel-header {
+      font-size: 14px;
+      font-weight: 600;
+      color: #2980b9;
+      margin-bottom: 10px;
+    }
+
+    .contact-item, .fuel-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 5px;
+    }
+
+    .contact-icon, .fuel-icon {
+      font-size: 16px;
+    }
+
+    .contact-label, .fuel-label {
+      font-size: 12px;
+      color: #7f8c8d;
+      font-weight: 600;
+      min-width: 60px;
+    }
+
+    .contact-value, .fuel-value {
+      font-weight: 500;
+      color: #2c3e50;
+    }
+
+    /* Vehicle Items */
+    .items-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+    }
+
+    .item-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      border-radius: 8px;
+      border: 2px solid;
+    }
+
+    .item-card.available {
+      background: #eafaf1;
+      border-color: #27ae60;
+    }
+
+    .item-card.missing {
+      background: #fdf2f2;
+      border-color: #e74c3c;
+    }
+
+    .item-icon {
+      font-size: 20px;
+    }
+
+    .item-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .item-name {
+      font-weight: 500;
+      color: #2c3e50;
+      font-size: 13px;
+    }
+
+    .item-status {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .item-card.available .item-status {
+      color: #27ae60;
+    }
+
+    .item-card.missing .item-status {
+      color: #e74c3c;
+    }
+
+    /* Damages */
+    .no-data-success {
+      text-align: center;
+      color: #27ae60;
+      padding: 40px;
+      background: #eafaf1;
+      border-radius: 8px;
+      border: 2px solid #27ae60;
+    }
+
+    .damages-summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+
+    .summary-card {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      padding: 20px;
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      border-radius: 8px;
+    }
+
+    .summary-icon {
+      font-size: 32px;
+    }
+
+    .summary-content {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .summary-number {
+      font-size: 24px;
+      font-weight: bold;
+      color: #856404;
+    }
+
+    .summary-label {
+      font-size: 12px;
+      color: #856404;
+      font-weight: 500;
+    }
+
+    .vehicle-diagram {
+      background: #f8f9fa;
+      padding: 30px;
+      border-radius: 12px;
+      margin: 20px 0;
+    }
+
+    .vehicle-outline {
+      display: grid;
+      grid-template-areas: 
+        "front front"
+        "middle middle"
+        "rear rear";
+      gap: 10px;
+      max-width: 400px;
+      margin: 0 auto;
+    }
+
+    .vehicle-part {
+      background: #e9ecef;
+      border: 2px solid #dee2e6;
+      border-radius: 8px;
+      padding: 15px;
+      text-align: center;
+      position: relative;
+      transition: all 0.3s ease;
+    }
+
+    .vehicle-part.front {
+      grid-area: front;
+    }
+
+    .vehicle-part.rear {
+      grid-area: rear;
+    }
+
+    .vehicle-middle {
+      grid-area: middle;
+      display: grid;
+      grid-template-columns: 1fr 2fr 1fr;
+      gap: 10px;
+    }
+
+    .vehicle-part.has-damage {
+      background: #f8d7da;
+      border-color: #dc3545;
+      color: #721c24;
+    }
+
+    .part-label {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .damage-count {
+      position: absolute;
+      top: -8px;
+      right: -8px;
+      background: #dc3545;
+      color: white;
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: bold;
+    }
+
+    .damages-list {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+
+    .damage-item {
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      border-radius: 8px;
+      padding: 15px;
+    }
+
+    .damage-header {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      margin-bottom: 10px;
+    }
+
+    .damage-number {
+      background: #ffc107;
+      color: #856404;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: bold;
+    }
+
+    .damage-type {
+      flex: 1;
+      font-weight: 500;
+      color: #856404;
+    }
+
+    .damage-date {
+      font-size: 12px;
+      color: #6c757d;
+    }
+
+    .damage-description {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      background: white;
+      padding: 10px;
+      border-radius: 6px;
+    }
+
+    .description-icon {
+      font-size: 16px;
+      margin-top: 2px;
+    }
+
+    .description-text {
+      flex: 1;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+
+    /* Footer Page */
+    .footer-page {
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+    }
+
+    .footer-content {
+      text-align: center;
+      max-width: 600px;
+      padding: 40px;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+    }
+
+    .footer-content h2 {
+      color: #2c3e50;
+      margin-bottom: 20px;
+    }
+
+    .document-info {
+      background: #f8f9fa;
+      padding: 20px;
+      border-radius: 8px;
+      margin-top: 20px;
+    }
+
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid #dee2e6;
+    }
+
+    .info-row:last-child {
+      border-bottom: none;
+    }
+
+    .info-label {
+      font-weight: 600;
+      color: #495057;
+    }
+
+    .info-value {
+      color: #2c3e50;
+    }
+
+    /* Responsive Design */
+    @media (max-width: 768px) {
+      .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      
+      .locations-container {
+        grid-template-columns: 1fr;
+      }
+      
+      .customer-grid, .driver-grid, .service-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  `;
+}
 
   private async generateHtmlContent(order: any): Promise<string> {
     // تحضير البيانات

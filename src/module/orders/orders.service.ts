@@ -309,10 +309,6 @@ async create(createOrderDto: CreateOrderDto, userId: string) {
   
   const { pickupAddress, deliveryAddress, clientAddress, billingAddress, damages, ...orderData } = updateData;
   
-    console.log("===============");
-
-    console.log(updateData);
-      console.log("===============");
 
   try {
     // إعداد البيانات للتحديث مع التحقق من القيم

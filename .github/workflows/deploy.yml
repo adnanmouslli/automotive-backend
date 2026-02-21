@@ -23,4 +23,5 @@ jobs:
             cd ${{ secrets.APP_PATH }}
             git pull origin main
             npm install
+            npm run build
             pm2 restart automotive-backend
